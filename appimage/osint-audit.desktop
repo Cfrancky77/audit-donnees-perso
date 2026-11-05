@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=osint-audit
+Name[fr]=Audit données perso
+Comment=Audit de mes propres données diffusées
+Exec=osint-audit --window
+Icon=osint-audit
+Terminal=false
+Categories=Utility;Security;
+StartupWMClass=osint-audit
