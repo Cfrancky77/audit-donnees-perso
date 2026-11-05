@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>osint-audit</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>osint-audit</name>
+  <name xml:lang="fr">Audit données perso</name>
+  <summary>Audit local de ses propres données diffusées en ligne</summary>
+  <description>
+    <p>Application locale pour retrouver où ses propres pseudos et adresses email apparaissent
+       (Maigret, Sherlock, Holehe), noter les fuites connues et suivre les demandes de suppression RGPD.
+       À utiliser uniquement sur ses propres identifiants.</p>
+  </description>
+  <launchable type="desktop-id">osint-audit.desktop</launchable>
+  <provides>
+    <binary>osint-audit</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>
