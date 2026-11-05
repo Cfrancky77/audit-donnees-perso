@@ -30,9 +30,16 @@ case "${1:-}" in
     -I|-m|-c|-u|-E|-s) exec "$PY" "$@" ;;
 esac
 
-if [ "$#" -eq 0 ]; then
-    set -- --window
-elif [ "$1" = "--serve" ]; then
-    shift
-fi
+# Sans mode explicite (aucun argument, ou seulement --data-dir DOSSIER) : fenêtre autonome.
+# --serve est retiré : osint_app.py sans mode = serveur seul.
+mode=""; args=()
+for a in "$@"; do
+    case "$a" in
+        --serve) mode=serve; continue ;;
+        --window|--rescan|--install-launcher|--install-timer|-h|--help) mode=other ;;
+    esac
+    args+=("$a")
+done
+[ -z "$mode" ] && args+=(--window)
+set -- "${args[@]}"
 exec "$PY" -I "$APPDIR/osint_app.py" "$@"
