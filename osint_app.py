@@ -48,7 +48,49 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
-BASE = Path.home() / "osint"
+# ------------------------------------------------------- Dossier de données
+# Priorité : option --data-dir > variable OSINT_DATA_DIR > réglage enregistré
+# (~/.config/osint-audit/settings.json, modifiable dans l'interface) > ~/osint.
+DEFAULT_BASE = Path.home() / "osint"
+SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "osint-audit" / "settings.json"
+
+
+def load_settings():
+    try:
+        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_settings(d):
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(SETTINGS_FILE)
+
+
+def _cli_data_dir(argv):
+    """Lit --data-dir avant argparse (le dossier doit être connu dès le chargement du module)."""
+    for i, a in enumerate(argv):
+        if a == "--data-dir" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--data-dir="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def resolve_data_dir(argv=None):
+    """Retourne (dossier, source) ; source = cli | env | settings | default."""
+    for src, val in (("cli", _cli_data_dir(sys.argv[1:] if argv is None else argv)),
+                     ("env", os.environ.get("OSINT_DATA_DIR")),
+                     ("settings", load_settings().get("data_dir"))):
+        if isinstance(val, str) and val.strip():
+            return Path(val.strip()).expanduser().resolve(), src
+    return DEFAULT_BASE, "default"
+
+
+BASE, DATA_SOURCE = resolve_data_dir()
 JOBS_DIR = BASE / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 os.chmod(BASE, 0o700)
@@ -84,6 +126,13 @@ def self_cmd():
     if ai and Path(ai).exists():
         return [ai]
     return [sys.executable, str(Path(__file__).resolve())]
+
+
+def self_cmd_data():
+    """self_cmd() + --data-dir quand le dossier vient de l'option ou de la variable : le menu et
+    systemd ne voient ni l'une ni l'autre. Le réglage enregistré, lui, est relu au démarrage."""
+    extra = ["--data-dir", str(BASE)] if DATA_SOURCE in ("cli", "env") else []
+    return self_cmd() + extra
 
 
 def quote_cmd(cmd):
@@ -1264,6 +1313,84 @@ def put_checklist(body: CheckBody):
     return {"done": d}
 
 
+DATA_FILES = ("jobs", "leaks.json", "demandes.json", "checklist.json", "config.json", "rapports_hebdo")
+
+
+def has_data(d):
+    return any((d / n).exists() for n in DATA_FILES if n != "jobs") or any((d / "jobs").glob("*/job.json"))
+
+
+@app.get("/api/settings")
+def get_settings():
+    saved = load_settings().get("data_dir") or ""
+    return {"data_dir": str(BASE), "source": DATA_SOURCE, "default": str(DEFAULT_BASE),
+            "saved": saved, "settings_file": str(SETTINGS_FILE)}
+
+
+class DataDirBody(BaseModel):
+    path: str = ""        # vide = revenir au défaut (~/osint)
+    copy_data: bool = False
+
+
+@app.post("/api/settings/data-dir")
+def set_data_dir(body: DataDirBody):
+    raw = body.path.strip()
+    if not raw:
+        target = DEFAULT_BASE
+    else:
+        target = Path(raw).expanduser()
+        if not target.is_absolute():
+            raise HTTPException(400, "indique un chemin complet, par ex. /home/moi/osint-donnees ou ~/osint-donnees")
+        target = target.resolve()
+    if target.exists() and not target.is_dir():
+        raise HTTPException(400, "ce chemin est un fichier, pas un dossier")
+    if target == BASE.resolve():
+        raise HTTPException(400, "c'est déjà le dossier utilisé")
+    if BASE.resolve() in target.parents:
+        raise HTTPException(400, "le nouveau dossier ne peut pas être à l'intérieur de l'actuel")
+    if any(j.get("state") in ("running", "queued") for j in JOBS.values()):
+        raise HTTPException(409, "une analyse est en cours : attends la fin")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        os.chmod(target, 0o700)
+        probe = target / ".osint-write-test"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as e:
+        raise HTTPException(400, f"dossier inutilisable : {e.strerror or e}") from e
+    copied = []
+    if body.copy_data:
+        if has_data(target):
+            raise HTTPException(409, "le dossier cible contient déjà des données : copie refusée (rien n'a été écrasé)")
+        for n in DATA_FILES:
+            src = BASE / n
+            if src.is_dir():
+                shutil.copytree(src, target / n, dirs_exist_ok=True)
+                copied.append(n)
+            elif src.is_file():
+                shutil.copy2(src, target / n)
+                copied.append(n)
+    st = load_settings()
+    if raw:
+        st["data_dir"] = str(target)
+    else:
+        st.pop("data_dir", None)
+    save_settings(st)
+    note = ""
+    if DATA_SOURCE in ("cli", "env"):
+        note = ("Attention : l'option --data-dir ou la variable OSINT_DATA_DIR est active et reste prioritaire "
+                "sur ce réglage tant qu'elle est utilisée.")
+    return {"ok": True, "data_dir": str(target), "copied": copied, "restart": True, "note": note}
+
+
+@app.get("/api/leaks/export")
+def export_leaks():
+    """Télécharge leaks.json (même format que le fichier, sans les conseils calculés)."""
+    data = json.dumps(load_leaks(), ensure_ascii=False, indent=1)
+    return PlainTextResponse(data, media_type="application/json", headers={
+        "Content-Disposition": f'attachment; filename="leaks-{date.today().isoformat()}.json"'})
+
+
 @app.get("/api/assistant/models")
 def assistant_models():
     try:
@@ -1445,7 +1572,7 @@ details summary{cursor:pointer;color:var(--mut);margin:8px 0}
   <div class="card" id="lk"><h2 id="lkhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px" title="Afficher / réduire"><span>Fuites connues <small>— à noter à la main (ex. compte gratuit haveibeenpwned.com)</small></span><span id="lktog" class="mut" style="font-size:13px;white-space:nowrap">▾ réduire</span></h2>
     <div id="lkbody">
      <div class="row" style="flex-wrap:wrap;gap:8px"><input type="text" id="lkaddr" placeholder="adresse email concernée" style="flex:2;min-width:180px"><input type="text" id="lksvc" placeholder="service / site (ex. Bouygues Télécom)" style="flex:2;min-width:180px"><input type="text" id="lkdate" placeholder="date (ex. août 2025)" style="flex:1;min-width:120px"></div>
-     <div class="row" style="margin-top:8px"><input type="text" id="lkdata" placeholder="données exposées, copiées depuis « Détails » (ex. numéros de compte bancaire, dates de naissance)" style="flex:1"><button id="lkadd">Ajouter</button></div>
+     <div class="row" style="margin-top:8px"><input type="text" id="lkdata" placeholder="données exposées, copiées depuis « Détails » (ex. numéros de compte bancaire, dates de naissance)" style="flex:1"><button id="lkadd">Ajouter</button><a id="lkexp" href="/api/leaks/export" download><button type="button" title="Télécharger la liste au format leaks.json">Exporter</button></a></div>
      <p id="lkerr" class="s-erreur" style="margin:6px 0 0"></p>
      <div id="lklist"></div>
      <p class="mut" style="font-size:12px">Saisie manuelle : l'app ne se connecte pas à HIBP. Les conseils viennent de mots-clés dans les données exposées ; ils ne remplacent pas la lecture de la fiche de la fuite.</p>
@@ -1460,6 +1587,13 @@ details summary{cursor:pointer;color:var(--mut);margin:8px 0}
   <div class="card ck" id="ck"><h2 id="ckhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px" title="Afficher / réduire"><span>À faire à la main <small>— coche au fur et à mesure (enregistré sur ce PC)</small></span><span id="cktog" class="mut" style="font-size:13px;white-space:nowrap">▾ réduire</span></h2>
     <div class="bar"><i id="ckbar"></i></div><p class="mut" id="cktxt"></p><div id="ckbody"><div id="cklist"></div>
     <p class="mut" style="font-size:12px">Liens écrits de mémoire, non vérifiés un par un : si une page a changé, cherche le nom du service.</p></div>
+  </div>
+  <div class="card" id="st"><h2>Dossier de données <small>— où l'application range analyses, fuites et demandes</small></h2>
+    <p style="margin:0 0 6px">Dossier utilisé : <b id="stdir"></b> <span id="stsrc" class="mut"></span></p>
+    <div class="row" style="flex-wrap:wrap;gap:8px"><input type="text" id="stpath" placeholder="nouveau dossier, ex. ~/osint-test (vide = ~/osint)" style="flex:1;min-width:220px">
+      <label class="mut" style="font-size:13px;white-space:nowrap"><input type="checkbox" id="stcopy"> copier mes données actuelles</label><button id="stgo">Changer</button></div>
+    <p id="stmsg" style="margin:6px 0 0"></p>
+    <p class="mut" style="font-size:12px">Sans copie, l'application repart à vide dans le nouveau dossier. L'ancien dossier n'est ni modifié ni supprimé. Le changement s'applique au prochain démarrage : ferme la fenêtre puis relance l'application.</p>
   </div>
 </section></main>
 <dialog id="dlg"><h2 id="dtitle"></h2><textarea id="dtext" readonly></textarea>
@@ -1652,6 +1786,14 @@ async function addLeak(){$("lkerr").textContent="";const b={address:$("lkaddr").
 async function delLeak(id){if(!confirm("Supprimer cette fuite de la liste ?"))return;await fetch("/api/leaks/"+id,{method:"DELETE"});await loadLeaks();if(cur)loadAnalysis();}
 $("lkadd").onclick=addLeak;$("lkdata").addEventListener("keydown",e=>{if(e.key==="Enter")addLeak();});
 function setLk(open){$("lkbody").style.display=open?"block":"none";$("lktog").textContent=open?"▾ réduire":"▸ afficher";try{localStorage.setItem("lkopen",open?"1":"0");}catch(e){}}
+const ST_SRC={default:"(par défaut)",settings:"(réglage enregistré)",env:"(variable OSINT_DATA_DIR)",cli:"(option --data-dir)"};
+async function loadSettings(){try{const d=await (await fetch("/api/settings")).json();$("stdir").textContent=d.data_dir;$("stsrc").textContent=ST_SRC[d.source]||"";}catch(e){}}
+$("stgo").onclick=async()=>{const m=$("stmsg");m.className="";m.textContent="…";
+ const r=await fetch("/api/settings/data-dir",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:$("stpath").value,copy_data:$("stcopy").checked})});
+ const d=await r.json().catch(()=>({}));
+ if(!r.ok){m.className="s-erreur";m.textContent=d.detail||("erreur "+r.status);return;}
+ m.className="s-terminé";m.textContent="Enregistré : "+d.data_dir+(d.copied&&d.copied.length?" (copié : "+d.copied.join(", ")+")":"")+". Ferme puis relance l'application pour l'utiliser."+(d.note?" "+d.note:"");};
+loadSettings();
 $("lkhead").onclick=()=>setLk($("lkbody").style.display==="none");
 try{if(localStorage.getItem("lkopen")==="0")setLk(false);}catch(e){}
 loadLeaks();
@@ -1818,7 +1960,7 @@ def install_timer():
     script = Path(__file__).resolve()
     (d / "osint-rescan.service").write_text(
         "[Unit]\nDescription=Audit hebdomadaire de mes données perso (osint_app)\n\n"
-        f"[Service]\nType=oneshot\nExecStart={quote_cmd(self_cmd() + ['--rescan'])}\n", encoding="utf-8")
+        f"[Service]\nType=oneshot\nExecStart={quote_cmd(self_cmd_data() + ['--rescan'])}\n", encoding="utf-8")
     (d / "osint-rescan.timer").write_text(
         "[Unit]\nDescription=Audit hebdomadaire (lundi 09:00)\n\n"
         "[Timer]\nOnCalendar=Mon *-*-* 09:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n", encoding="utf-8")
@@ -1941,7 +2083,7 @@ def install_launcher():
     desk.write_text(
         "[Desktop Entry]\nType=Application\nName=Audit données perso\n"
         "Comment=Audit de mes propres données diffusées\n"
-        f"Exec={quote_cmd(self_cmd() + ['--window'])}\n"
+        f"Exec={quote_cmd(self_cmd_data() + ['--window'])}\n"
         f"Icon={icons / 'osint-audit.svg'}\nTerminal=false\nCategories=Utility;Security;\nStartupWMClass=osint-audit\n",
         encoding="utf-8")
     os.chmod(desk, 0o755)
@@ -1958,6 +2100,8 @@ def main():
     ap.add_argument("--window", action="store_true", help="ouvre l'application dans sa propre fenêtre (sans onglet de navigateur)")
     ap.add_argument("--install-launcher", action="store_true", help="crée l'icône dans le menu des applications")
     ap.add_argument("--install-timer", action="store_true", help="écrit un minuteur systemd hebdomadaire (utilisateur), sans l'activer")
+    ap.add_argument("--data-dir", metavar="DOSSIER", help="dossier de données pour ce lancement (sinon OSINT_DATA_DIR, "
+                    "puis le réglage de l'interface, puis ~/osint)")
     args = ap.parse_args()
     if args.install_launcher:
         sys.exit(install_launcher())
@@ -1968,6 +2112,7 @@ def main():
     if args.rescan:
         sys.exit(rescan_cli())
     load_jobs()
+    print("Données   :", BASE)
     print("Interface : http://127.0.0.1:8300")
     uvicorn.run(app, host="127.0.0.1", port=8300, log_level="warning")
 

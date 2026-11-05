@@ -90,16 +90,19 @@ git tag v0.1.0 && git push origin v0.1.0
 
 | Réglage | Où | Défaut |
 |---|---|---|
+| Dossier de données | carte « Dossier de données » de l'interface (enregistré dans `~/.config/osint-audit/settings.json`), ou variable `OSINT_DATA_DIR`, ou option `--data-dir DOSSIER` | `~/osint` |
 | Serveur Ollama de l'assistant | variable `OLLAMA_URL`, ou `~/osint/config.json` : `{"ollama_url": "http://hote:11434"}` | `http://127.0.0.1:11434` |
 
-Priorité : variable d'environnement, puis `config.json`, puis la valeur par défaut. L'assistant est facultatif : sans Ollama, tout le reste fonctionne.
+Dossier de données : `--data-dir`, puis `OSINT_DATA_DIR`, puis le réglage de l'interface, puis `~/osint`. Le changement s'applique au redémarrage ; l'option « copier mes données actuelles » copie sans rien supprimer. `--install-launcher` et `--install-timer` inscrivent `--data-dir` quand le dossier vient de l'option ou de la variable.
 
-## Données stockées (tout est dans `~/osint/`, dossier en mode 700)
+Ollama : variable d'environnement, puis `config.json`, puis la valeur par défaut. L'assistant est facultatif : sans Ollama, tout le reste fonctionne.
+
+## Données stockées (dans le dossier de données, `~/osint/` par défaut, mode 700)
 
 | Fichier / dossier | Contenu |
 |---|---|
 | `jobs/<id>/job.json` + sorties des outils | Analyses |
-| `leaks.json` | Fuites notées à la main |
+| `leaks.json` | Fuites notées à la main (bouton « Exporter » de la carte Fuites : télécharge ce fichier) |
 | `demandes.json` | Suivi des demandes de suppression |
 | `checklist.json` | Cases cochées |
 | `rapports_hebdo/` | Rapports du mode `--rescan` |
