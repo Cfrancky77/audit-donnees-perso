@@ -105,6 +105,7 @@ Ollama : variable d'environnement, puis `config.json`, puis la valeur par défau
 | `leaks.json` | Fuites notées à la main (bouton « Exporter » de la carte Fuites : télécharge ce fichier) |
 | `demandes.json` | Suivi des demandes de suppression |
 | `checklist.json` | Cases cochées |
+| `journal.jsonl` | Journal chronologique : analyses, demandes, fuites, checklist, relances, réglages (carte « Journal », export CSV). Au premier lancement, les événements datables des données existantes sont reconstitués. |
 | `rapports_hebdo/` | Rapports du mode `--rescan` |
 | `config.json` | Réglages facultatifs |
 
