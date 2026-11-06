@@ -48,11 +48,25 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
+IS_WIN = sys.platform == "win32"
+FROZEN = bool(getattr(sys, "frozen", False))  # exécutable Windows (PyInstaller)
+
+
+def safe_chmod(path, mode):
+    """Droits Unix ; sans effet utile sous Windows (le profil utilisateur est déjà privé)."""
+    if IS_WIN:
+        return
+    os.chmod(path, mode)
+
+
 # ------------------------------------------------------- Dossier de données
 # Priorité : option --data-dir > variable OSINT_DATA_DIR > réglage enregistré
 # (~/.config/audit-donnees-perso/settings.json, modifiable dans l'interface) > ~/osint.
 DEFAULT_BASE = Path.home() / "osint"
-SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "audit-donnees-perso" / "settings.json"
+if IS_WIN:
+    SETTINGS_FILE = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "audit-donnees-perso" / "settings.json"
+else:
+    SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "audit-donnees-perso" / "settings.json"
 
 
 LEGACY_SETTINGS_FILE = SETTINGS_FILE.parent.parent / "osint-audit" / "settings.json"  # ancien nom de l'application
@@ -99,7 +113,7 @@ def resolve_data_dir(argv=None):
 BASE, DATA_SOURCE = resolve_data_dir()
 JOBS_DIR = BASE / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
-os.chmod(BASE, 0o700)
+safe_chmod(BASE, 0o700)
 
 # ------------------------------------------------------- Journal chronologique
 # Une ligne JSON par événement dans <dossier de données>/journal.jsonl (ajout seul, jamais réécrit).
@@ -151,12 +165,18 @@ def load_config():
 OLLAMA_URL = str(os.environ.get("OLLAMA_URL") or load_config().get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
 
 
+def py_prefix():
+    """Début de commande pour lancer du Python. Dans l'exécutable Windows, sys.executable est
+    l'application elle-même : elle sait exécuter « --py -m module » et « --py -c code » (winmain.py)."""
+    return [sys.executable, "--py"] if FROZEN else [sys.executable, "-I"]
+
+
 def tool_cmd(script, module):
     """Commande pour lancer un outil avec l'interpréteur courant (« python -I -m »), ce qui marche
     aussi bien dans un venv que dans un AppImage. Repli : le script du dossier bin. None si absent."""
     import importlib.util
-    if importlib.util.find_spec(module):
-        return [sys.executable, "-I", "-m", module]
+    if FROZEN or importlib.util.find_spec(module):
+        return py_prefix() + ["-m", module]
     exe = BIN / script
     return [str(exe)] if exe.exists() else None
 
@@ -166,6 +186,8 @@ def self_cmd():
     ai = os.environ.get("APPIMAGE")
     if ai and Path(ai).exists():
         return [ai]
+    if FROZEN:
+        return [sys.executable]
     return [sys.executable, str(Path(__file__).resolve())]
 
 
@@ -211,6 +233,21 @@ def add_warn(target, msg):
     target["warn"] = (target["warn"] + " · " if target.get("warn") else "") + msg
 
 
+def stop_tree(proc, force=False):
+    """Arrête un outil et ses sous-processus (groupe de processus sous Unix, taskkill /T sous Windows)."""
+    if IS_WIN:
+        cmd = ["taskkill", "/PID", str(proc.pid), "/T"] + (["/F"] if force else [])
+        try:
+            subprocess.run(cmd, capture_output=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+        except OSError:
+            pass
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL if force else signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
 class Out(str):
     """Sortie d'une commande ; .timeout vaut True si la durée maximale a été atteinte."""
     timeout = False
@@ -219,11 +256,15 @@ class Out(str):
 def run_cmd(job, cmd, cwd, max_s=None):
     """Lance une commande, relaie la sortie dans le journal.
     Retourne (code, sortie). Si max_s est dépassé : arrêt propre (SIGTERM puis SIGKILL), sortie.timeout=True."""
-    env = dict(os.environ, NO_COLOR="1", PYTHONUNBUFFERED="1")
+    env = dict(os.environ, NO_COLOR="1", PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    if IS_WIN:
+        extra = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
+    else:
+        extra = {"start_new_session": True}
     proc = subprocess.Popen(
-        cmd, cwd=cwd, env=env, text=True, errors="replace",
+        cmd, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace",
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        start_new_session=True,
+        **extra,
     )
     PROCS[job["id"]] = proc
     state = {"timeout": False}
@@ -231,19 +272,13 @@ def run_cmd(job, cmd, cwd, max_s=None):
 
     def _kill():
         if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+            stop_tree(proc, force=True)
 
     def _term():
         if proc.poll() is None:
             state["timeout"] = True
             log(job, f"Durée maximale atteinte ({max_s / 60:g} min) : arrêt de l'outil, résultats partiels conservés")
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            stop_tree(proc, force=IS_WIN)
             k = threading.Timer(8, _kill)
             k.daemon = True
             k.start()
@@ -451,7 +486,7 @@ def run_holehe(job, target, workdir):
     # sans --only-used : on a besoin des lignes [-] et [x] pour mesurer la couverture réelle
     # -I : n'ajoute pas le dossier courant à sys.path (sinon un dossier « osint » local masque le
     # sous-paquet holehe.modules.osint et Holehe plante) ; -u : sortie non bufferisée
-    base = [sys.executable, "-I", "-u", "-c", HOLEHE_WRAPPER, target["value"], "-C"]
+    base = py_prefix() + ["-u", "-c", HOLEHE_WRAPPER, target["value"], "-C"]
     HM = 180  # Holehe termine normalement en quelques secondes : 3 min max
     code, out = run_cmd(job, base + ["--no-color", "--no-clear"], workdir, HM)
     if code == 2 and not out.timeout:
@@ -938,10 +973,7 @@ def cancel_job(job_id: str):
     j["cancel"] = True
     proc = PROCS.get(job_id)
     if proc and proc.poll() is None:
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        stop_tree(proc, force=IS_WIN)
     return {"ok": True}
 
 
@@ -1488,7 +1520,7 @@ def set_data_dir(body: DataDirBody):
         raise HTTPException(409, "une analyse est en cours : attends la fin")
     try:
         target.mkdir(parents=True, exist_ok=True)
-        os.chmod(target, 0o700)
+        safe_chmod(target, 0o700)
         probe = target / ".audit-write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
@@ -2445,7 +2477,7 @@ def rescan_cli():
     if not waiting:
         lines.append("- aucune")
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    os.chmod(REPORT_DIR, 0o700)
+    safe_chmod(REPORT_DIR, 0o700)
     out = REPORT_DIR / f"{today.isoformat()}.md"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("Rapport :", out)
@@ -2457,7 +2489,21 @@ def rescan_cli():
     return 0
 
 
+def install_timer_windows():
+    cmd = quote_cmd(self_cmd_data() + ["--rescan"])
+    print("Tâche planifiée hebdomadaire (lundi 09:00). Rien n'est créé tant que tu ne lances pas cette commande")
+    print("dans une invite de commandes ou PowerShell :")
+    print()
+    print(f'  schtasks /Create /TN "audit-donnees-perso rescan" /SC WEEKLY /D MON /ST 09:00 /TR "{cmd.replace(chr(34), chr(92) + chr(34))}"')
+    print()
+    print('Pour vérifier : schtasks /Query /TN "audit-donnees-perso rescan"')
+    print('Pour arrêter  : schtasks /Delete /TN "audit-donnees-perso rescan" /F')
+    return 0
+
+
 def install_timer():
+    if IS_WIN:
+        return install_timer_windows()
     d = Path.home() / ".config" / "systemd" / "user"
     d.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
@@ -2504,6 +2550,17 @@ def notify(msg):
         subprocess.run(["notify-send", "Audit données perso", msg], check=False)
 
 
+def browser_candidates():
+    """Chemins des navigateurs capables d'ouvrir une fenêtre « application » (--app=)."""
+    if IS_WIN:
+        roots = [os.environ.get(k) for k in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
+        rel = [r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe",
+               r"BraveSoftware\Brave-Browser\Application\brave.exe", r"Chromium\Application\chrome.exe"]
+        found = [str(Path(r) / x) for x in rel for r in roots if r and (Path(r) / x).exists()]
+        return found
+    return [shutil.which(b) for b in BROWSERS]
+
+
 def open_window():
     """Ouvre l'interface dans une fenêtre d'application. Retourne un objet avec wait() ou None."""
     try:
@@ -2516,11 +2573,10 @@ def open_window():
     except Exception:  # noqa: BLE001
         pass
     prof = BASE / ".window-profile"
-    for b in BROWSERS:
-        exe = shutil.which(b)
+    for exe in browser_candidates():
         if exe:
             cmd = [exe, f"--app={URL}", f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check",
-                   "--window-size=1280,900", "--class=audit-donnees-perso"]
+                   "--window-size=1280,900"] + ([] if IS_WIN else ["--class=audit-donnees-perso"])
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             class CH:
                 def wait(self):
@@ -2552,7 +2608,10 @@ def window_mode():
     w = open_window()
     if w is None:
         print("Aucune fenêtre d'application disponible (Chrome, Chromium, Brave ou Edge) : ouverture dans le navigateur par défaut.")
-        if shutil.which("xdg-open"):
+        if IS_WIN:
+            import webbrowser
+            webbrowser.open(URL)
+        elif shutil.which("xdg-open"):
             subprocess.run(["xdg-open", URL], check=False)
         else:
             print("Ouvre cette adresse dans ton navigateur :", URL)
@@ -2576,7 +2635,30 @@ def window_mode():
     return 0
 
 
+def install_launcher_windows():
+    """Raccourci dans le menu Démarrer (via PowerShell / WScript.Shell)."""
+    menu = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    menu.mkdir(parents=True, exist_ok=True)
+    lnk = menu / "Audit données perso.lnk"
+    cmd = self_cmd_data() + ["--window"]
+    target, args = cmd[0], subprocess.list2cmdline(cmd[1:])
+    ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:AUDIT_LNK);"
+          "$s.TargetPath=$env:AUDIT_TARGET;$s.Arguments=$env:AUDIT_ARGS;"
+          "$s.Description='Audit de mes propres données diffusées';$s.Save()")
+    env = dict(os.environ, AUDIT_LNK=str(lnk), AUDIT_TARGET=target, AUDIT_ARGS=args)
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], env=env,
+                       capture_output=True, text=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW)
+    if r.returncode != 0 or not lnk.exists():
+        print("Raccourci non créé :", (r.stderr or r.stdout).strip()[:300])
+        return 1
+    print("Raccourci écrit :", lnk)
+    print("Cherche « Audit données perso » dans le menu Démarrer. Pour le retirer : supprime ce raccourci.")
+    return 0
+
+
 def install_launcher():
+    if IS_WIN:
+        return install_launcher_windows()
     script = Path(__file__).resolve()
     apps = Path.home() / ".local" / "share" / "applications"
     icons = Path.home() / ".local" / "share" / "icons"
@@ -2606,11 +2688,16 @@ def main():
     ap = argparse.ArgumentParser(description="Audit de mes propres données diffusées")
     ap.add_argument("--rescan", action="store_true", help="relance la dernière analyse, compare et écrit un rapport (sans interface)")
     ap.add_argument("--window", action="store_true", help="ouvre l'application dans sa propre fenêtre (sans onglet de navigateur)")
-    ap.add_argument("--install-launcher", action="store_true", help="crée l'icône dans le menu des applications")
-    ap.add_argument("--install-timer", action="store_true", help="écrit un minuteur systemd hebdomadaire (utilisateur), sans l'activer")
+    ap.add_argument("--install-launcher", action="store_true", help="crée l'icône dans le menu des applications (menu Démarrer sous Windows)")
+    ap.add_argument("--install-timer", action="store_true", help="minuteur hebdomadaire : fichiers systemd (utilisateur) sous Linux, commande schtasks sous Windows ; rien n'est activé")
     ap.add_argument("--data-dir", metavar="DOSSIER", help="dossier de données pour ce lancement (sinon OSINT_DATA_DIR, "
                     "puis le réglage de l'interface, puis ~/osint)")
     args = ap.parse_args()
+    for stream in (sys.stdout, sys.stderr):  # accents lisibles même dans une console Windows
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     if args.install_launcher:
         sys.exit(install_launcher())
     if args.window:

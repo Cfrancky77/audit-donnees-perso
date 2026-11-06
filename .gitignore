@@ -28,3 +28,9 @@ squashfs-root/
 *.key
 *.p12
 id_rsa*
+
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
