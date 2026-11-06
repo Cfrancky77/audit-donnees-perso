@@ -6,7 +6,7 @@ Application **locale** (une interface web servie sur ton PC, ouvrable dans une f
 
 Statut : projet personnel en cours. Licence : MIT (voir `LICENSE`).
 
-Icône : illustration « détective » de GraphicMama-team (source supposée : Pixabay, licence Pixabay, à confirmer par le mainteneur). Elle n'est pas couverte par la licence MIT du code.
+Icône : illustration « détective » de GraphicMama-team, sous licence Pixabay (usage libre et gratuit, sans attribution obligatoire, modification permise ; interdit : l'utiliser comme marque, logo déposé ou nom commercial). Elle n'est pas couverte par la licence MIT du code.
 
 ---
 
