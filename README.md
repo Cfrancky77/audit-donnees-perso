@@ -4,7 +4,7 @@ Application **locale** (une interface web servie sur ton PC, ouvrable dans une f
 
 > **Usage strictement personnel.** À utiliser uniquement sur **tes propres** pseudos, adresses email et nom. Ne l'utilise jamais pour chercher des informations sur une autre personne.
 
-Statut : projet personnel en cours, dépôt privé. Aucune licence n'est définie pour l'instant.
+Statut : projet personnel en cours. Licence : MIT (voir `LICENSE`).
 
 ---
 
@@ -155,4 +155,3 @@ Un seul fichier, `audit_donnees_perso.py` :
 - Intégration de l'API HIBP (clé lue dans la variable `HIBP_API_KEY`, jamais saisie dans l'interface).
 - Bouton « relancer seulement les sites bloqués ».
 - Tests automatisés.
-- Choix d'une licence.
