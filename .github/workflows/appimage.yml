@@ -49,7 +49,7 @@ jobs:
       contents: write
     steps:
       # TODO : épingler sur un hash (non résolu : ce job n'a pas encore tourné)
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: audit-donnees-perso-AppImage
       - name: Publier la release
