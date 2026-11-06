@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><link rel="icon" href="img/icone.png">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Audit données perso</title>
+<style>
+/* Page d'accueil : sobre, bleu de l'application, deux thèmes ; captures réelles (données fictives). */
+:root{--bg:#f4f6fb;--card:#ffffff;--fg:#1b2230;--mut:#5d6779;--line:#dde2ec;--acc:#3f5bd8;--accfg:#ffffff;--soft:#e6ebff;--top:#3f5bd8;
+ --ok:#1f8a5b;--warn:#b26a00;--f:system-ui,-apple-system,"Segoe UI",Ubuntu,Cantarell,sans-serif;--mono:ui-monospace,"DejaVu Sans Mono",monospace;--shadow:0 1px 2px rgba(27,34,48,.06),0 8px 24px rgba(27,34,48,.08)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#171b24;--card:#232a37;--fg:#e4e8f0;--mut:#9aa3b5;--line:#364055;--acc:#8ea2ff;--accfg:#0e1220;--soft:#2b3560;--top:#3a52c4;--ok:#3fbf7f;--warn:#e9a23b;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.3);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#171b24;--card:#232a37;--fg:#e4e8f0;--mut:#9aa3b5;--line:#364055;--acc:#8ea2ff;--accfg:#0e1220;--soft:#2b3560;--top:#3a52c4;--ok:#3fbf7f;--warn:#e9a23b;--shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.3);color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--f);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.w{max-width:1080px;margin:0 auto}
+a{color:var(--acc)}
+.nav{display:flex;align-items:center;gap:16px;padding-block:14px;flex-wrap:wrap}
+.nav b{display:flex;align-items:center;gap:8px;font-size:17px}.nav svg{width:28px;height:28px}
+.nav .sp{flex:1}.nav a{text-decoration:none;color:var(--mut);font-size:14.5px}.nav a:hover{color:var(--acc)}
+.hero{padding-block:36px 28px;display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:32px;align-items:center}
+h1{font-size:clamp(28px,4.4vw,42px);line-height:1.12;margin:0 0 14px;text-wrap:balance;letter-spacing:-.01em}
+.lead{font-size:18px;color:var(--mut);margin:0 0 20px;max-width:46ch}
+.cta{display:flex;gap:10px;flex-wrap:wrap}
+.btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);text-decoration:none;font-weight:600;font-size:15px}
+.btn.pri{background:var(--acc);border-color:var(--acc);color:var(--accfg)}
+.btn:focus-visible,a:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+figure{margin:0}
+figure img{display:block;width:100%;height:auto;border-radius:10px;border:1px solid var(--line);box-shadow:var(--shadow)}
+figcaption{font-size:13px;color:var(--mut);margin-top:8px}
+.note{background:var(--soft);border-radius:10px;padding:12px 16px;font-size:14.5px;margin-block:8px 0}
+section{padding-block:34px}
+h2{font-size:clamp(22px,3vw,28px);margin:0 0 6px;text-wrap:balance}
+.sub{color:var(--mut);margin:0 0 22px;max-width:62ch}
+.feat{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.feat div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}
+.feat h3{font-size:15.5px;margin:0 0 4px}.feat p{margin:0;font-size:14.5px;color:var(--mut)}
+.row2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.tour{display:flex;flex-direction:column;gap:42px}
+.step{display:grid;grid-template-columns:minmax(0,4fr) minmax(0,7fr);gap:28px;align-items:center}
+.step:nth-child(even){grid-template-columns:minmax(0,7fr) minmax(0,4fr)}.step:nth-child(even) .txt{order:2}
+.step h3{font-size:20px;margin:0 0 8px}.step p{margin:0 0 8px;color:var(--mut)}
+ul.tight{margin:0;padding-left:18px;color:var(--mut)}ul.tight li{margin:3px 0}
+.out{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.out div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:12px;padding:11px 16px;border-top:1px solid var(--line);font-size:14.5px}
+.out div:first-child{border-top:0}.out b{font-weight:600}.out span{color:var(--mut)}
+pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow-x:auto;font:13.5px/1.6 var(--mono);margin:0 0 14px}
+.limits{columns:2;column-gap:28px;color:var(--mut);font-size:14.5px;padding-left:18px;margin:0}.limits li{break-inside:avoid;margin-bottom:8px}
+footer{padding-block:28px 40px;color:var(--mut);font-size:14px;border-top:1px solid var(--line)}
+@media(max-width:820px){.hero,.step,.step:nth-child(even){grid-template-columns:minmax(0,1fr)}.step:nth-child(even) .txt{order:0}.row2{grid-template-columns:minmax(0,1fr)}.limits{columns:1}.out div{grid-template-columns:minmax(0,1fr)}}
+</style>
+</head><body>
+
+<div class="w">
+<div class="nav"><b><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#1b2230"/><path d="M32 8l18 6v14c0 12-8 21-18 26C22 49 14 40 14 28V14z" fill="#6d8bff"/><circle cx="29" cy="29" r="8" fill="none" stroke="#fff" stroke-width="3"/><path d="M35 35l9 9" stroke="#fff" stroke-width="4" stroke-linecap="round"/></svg>Audit données perso</b><span class="sp"></span><a href="#fonctions">Fonctions</a><a href="#visite">Visite</a><a href="#confidentialite">Confidentialité</a><a href="#installer">Installer</a><a href="#limites">Limites</a></div>
+
+<header class="hero">
+ <div>
+  <h1>Retrouve ce qui circule sur toi sur Internet, puis fais-le supprimer.</h1>
+  <p class="lead">Application locale pour auditer <b>tes propres</b> données : comptes liés à tes pseudos et adresses email, fuites connues, demandes de suppression RGPD et leur suivi.</p>
+  <div class="cta"><a class="btn pri" href="#installer">Installer</a><a class="btn" href="#visite">Voir l'application</a></div>
+  <p class="note"><b>Usage strictement personnel.</b> Uniquement sur tes pseudos, tes adresses et ton nom. Jamais pour chercher des informations sur une autre personne.</p>
+ </div>
+ <figure><img src="img/console.png" alt="Tableau de bord de l'application en thème sombre : tuiles pour la dernière analyse, les outils, les comptes trouvés, les demandes, les fuites et la checklist" width="1020" height="645"><figcaption>La console, en thème sombre. Données fictives.</figcaption></figure>
+</header>
+
+<section id="fonctions">
+ <h2>Ce que fait l'application</h2>
+ <p class="sub">Trouver, supprimer, revérifier : les trois étapes d'un nettoyage de ses données, au même endroit.</p>
+ <div class="feat">
+  <div><h3>Analyse de pseudos et d'emails</h3><p>Maigret et Sherlock pour les pseudos (des milliers de sites), Holehe pour les emails. Plusieurs cibles à la fois, une analyse à la fois.</p></div>
+  <div><h3>Suivi en direct</h3><p>Progression par cible, durée maximale par outil avec résultats partiels conservés, annulation possible.</p></div>
+  <div><h3>Analyse claire</h3><p>Catégorie et sensibilité de chaque compte, « est-ce moi ? », données visibles publiquement, plan d'action.</p></div>
+  <div><h3>Demandes RGPD</h3><p>« Faire une demande » prépare un mail type (art. 15, 17 ou les deux) et ouvre ta messagerie. Ensuite, « Suivre la demande ».</p></div>
+  <div><h3>Échéances et relances</h3><p>Un mois après l'envoi (art. 12.3), relance préparée sur le même modèle. Jamais envoyée automatiquement.</p></div>
+  <div><h3>Fuites connues</h3><p>Saisie à la main (compte gratuit haveibeenpwned.com), conseils selon les données exposées, export et import de la liste.</p></div>
+  <div><h3>Mot de passe compromis ?</h3><p>Test Pwned Passwords : l'empreinte est calculée dans ton navigateur, seuls 5 caractères sont envoyés.</p></div>
+  <div><h3>Comparaison</h3><p>Nouveaux comptes, comptes non retrouvés, inchangés, par rapport à l'analyse précédente.</p></div>
+  <div><h3>Recherche par nom</h3><p>Liens de recherche pré-remplis (moteurs, annuaires, réseaux), à ouvrir toi-même.</p></div>
+  <div><h3>Journal et checklist</h3><p>Chronologie de tout ce qui a été lancé et fait, et 19 contrôles manuels à cocher.</p></div>
+  <div><h3>Relance hebdomadaire</h3><p>Mode sans interface avec rapport, et minuteur systemd facultatif.</p></div>
+  <div><h3>Assistant facultatif</h3><p>Un Ollama local explique les résultats. Sans lui, tout le reste fonctionne.</p></div>
+ </div>
+</section>
+
+<section id="visite">
+ <h2>Visite guidée</h2>
+ <p class="sub">Deux dispositions au choix (Console ou Menu), thème sombre ou clair, assistant et historique repliables à droite.</p>
+ <div class="tour">
+  <div class="step"><div class="txt"><h3>1. Trouver</h3><p>Lance une analyse, puis lis les résultats du plus important au moins important.</p><ul class="tight"><li>Sensibilité et correspondance par compte</li><li>Plan d'action et comparaison avec l'analyse précédente</li></ul></div>
+   <figure><img src="img/resultats.png" alt="Page Résultats en thème clair : suivi de l'analyse, indicateurs, répartition par catégorie et plan d'action" width="1020" height="645" loading="lazy"><figcaption>Résultats, disposition Menu, thème clair.</figcaption></figure></div>
+  <div class="step"><div class="txt"><h3>2. Demander</h3><p>Sur chaque compte, un bouton « Faire une demande ». Le texte est modifiable, le destinataire à renseigner, et c'est toi qui envoies.</p><ul class="tight"><li>Effacement (art. 17), accès (art. 15) ou les deux</li><li>Ouverture de ta messagerie par défaut, ou copie du texte</li></ul></div>
+   <figure><img src="img/mail.png" alt="Fenêtre de mail type pour une demande d'effacement, avec destinataire, texte modifiable et boutons Ouvrir ma messagerie et Copier" width="1020" height="645" loading="lazy"><figcaption>Le mail type d'une demande d'effacement.</figcaption></figure></div>
+  <div class="step"><div class="txt"><h3>3. Suivre</h3><p>Chaque demande a son statut, sa date d'envoi et son échéance. Une demande en retard se relance en un clic.</p><ul class="tight"><li>Vérification que la page répond encore</li><li>N° de dossier et notes</li></ul></div>
+   <figure><img src="img/demandes.png" alt="Rubrique Demandes : une demande en retard et une en attente, avec statut, destinataire et bouton Relancer" width="1020" height="645" loading="lazy"><figcaption>Suivi des demandes et relances.</figcaption></figure></div>
+  <div class="step"><div class="txt"><h3>Fuites et mémoire</h3><p>Note tes fuites connues, exporte-les, réimporte-les sur un autre poste. Le journal garde la trace de chaque action.</p></div>
+   <div class="row2"><figure><img src="img/fuites.png" alt="Rubrique Fuites connues avec export, import et conseils" width="1020" height="645" loading="lazy"><figcaption>Fuites connues.</figcaption></figure><figure><img src="img/journal.png" alt="Journal chronologique des analyses, demandes et fuites" width="1020" height="645" loading="lazy"><figcaption>Journal.</figcaption></figure></div></div>
+  <div class="step"><div class="txt"><h3>À ta façon</h3><p>La console se réorganise : glisse les tuiles, masque celles dont tu n'as pas besoin. Le thème clair est là aussi.</p></div>
+   <figure><img src="img/console-clair.png" alt="Console en thème clair" width="1020" height="645" loading="lazy"><figcaption>La console, en thème clair.</figcaption></figure></div>
+ </div>
+</section>
+
+<section id="confidentialite">
+ <h2>Ce qui sort de ta machine</h2>
+ <p class="sub">L'interface n'écoute que sur 127.0.0.1. Aucune télémétrie. Tes données restent dans un dossier que tu choisis (<code>~/osint</code> par défaut).</p>
+ <div class="out">
+  <div><b>Les analyses</b><span>Les pseudos et emails sont envoyés aux sites testés : c'est le principe même de l'outil.</span></div>
+  <div><b>Pwned Passwords</b><span>5 caractères d'une empreinte SHA-1, jamais le mot de passe.</span></div>
+  <div><b>Vérification de page</b><span>Une requête vers le lien que tu as saisi.</span></div>
+  <div><b>Recherche par nom</b><span>Ton nom est transmis au moteur choisi quand tu cliques un lien.</span></div>
+  <div><b>Assistant</b><span>Uniquement vers l'Ollama que tu as configuré.</span></div>
+  <div><b>Mails de demande</b><span>Rien n'est envoyé par l'application : ta messagerie s'ouvre, tu relis et tu envoies.</span></div>
+ </div>
+</section>
+
+<section id="installer">
+ <h2>Installer</h2>
+ <p class="sub">Linux. Le plus simple : l'AppImage, un seul fichier qui embarque Python et les outils. Chrome, Chromium, Brave ou Edge est nécessaire pour la fenêtre autonome.</p>
+ <div class="row2">
+  <div><h3 style="margin:0 0 8px">AppImage</h3>
+<pre>chmod +x audit-donnees-perso-x86_64.AppImage
+./audit-donnees-perso-x86_64.AppImage
+# serveur seul : --serve
+# icône du menu : --install-launcher</pre>
+   <p class="sub" style="margin:0">À télécharger dans les <a href="https://github.com/Cfrancky77/audit-donnees-perso/releases">releases</a> du dépôt. Sur Ubuntu 22.04 et Zorin, installe <code>libfuse2</code>.</p></div>
+  <div><h3 style="margin:0 0 8px">Avec Python</h3>
+<pre>python3 -m venv venv &amp;&amp; source venv/bin/activate
+pip install fastapi uvicorn maigret holehe sherlock-project
+python audit_donnees_perso.py
+# puis http://127.0.0.1:8300</pre>
+   <p class="sub" style="margin:0">Python 3.10 ou plus.</p></div>
+ </div>
+</section>
+
+<section id="limites">
+ <h2>Limites connues</h2>
+ <ul class="limits">
+  <li><b>Holehe</b> : sur une adresse testée, 41 modules sur 122 ont répondu de façon fiable. « 0 compte » ne veut pas dire « aucun compte ».</li>
+  <li><b>Maigret et Sherlock</b> : faux positifs possibles (homonymes), et certains sites bloquent les scans.</li>
+  <li><b>Fuites</b> : saisie à la main, l'application ne se connecte pas à l'API HIBP. Le dark web n'est pas couvert.</li>
+  <li><b>« Disparu »</b> veut dire « non détecté cette fois », pas forcément « supprimé ».</li>
+  <li>La vérification d'une page ne repère pas les pages vides sans code d'erreur : confirme à la main.</li>
+  <li>Projet personnel en cours : tout n'a pas encore été vu en conditions réelles.</li>
+ </ul>
+</section>
+
+<footer>Audit données perso · projet personnel, licence MIT · <a href="https://github.com/Cfrancky77/audit-donnees-perso">dépôt GitHub</a>. Les captures de cette page utilisent des données fictives.</footer>
+</div>
+
+</body></html>
