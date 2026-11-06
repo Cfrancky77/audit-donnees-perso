@@ -94,6 +94,41 @@ BASE, DATA_SOURCE = resolve_data_dir()
 JOBS_DIR = BASE / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 os.chmod(BASE, 0o700)
+
+# ------------------------------------------------------- Journal chronologique
+# Une ligne JSON par événement dans <dossier de données>/journal.jsonl (ajout seul, jamais réécrit).
+JOURNAL_FILE = BASE / "journal.jsonl"
+JOURNAL_LOCK = threading.Lock()
+JOURNAL_TYPES = ("analyse", "demande", "fuite", "checklist", "rapport", "réglage")
+
+
+def journal(kind, text, ref=None, at=None, rebuilt=False):
+    """Ajoute un événement. kind ∈ JOURNAL_TYPES ; ref = id de l'analyse / demande / fuite concernée."""
+    ev = {"at": at or datetime.now().isoformat(timespec="seconds"), "type": kind, "text": str(text)[:300]}
+    if ref:
+        ev["ref"] = ref
+    if rebuilt:
+        ev["rebuilt"] = True
+    try:
+        with JOURNAL_LOCK, JOURNAL_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # le journal ne doit jamais faire échouer une action
+
+
+def read_journal():
+    out = []
+    try:
+        for line in JOURNAL_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                ev = json.loads(line)
+                if isinstance(ev, dict) and ev.get("at") and ev.get("type"):
+                    out.append(ev)
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return out
 BIN = Path(sys.executable).parent  # binaires du venv (repli si l'appel par « python -m » est impossible)
 
 
@@ -470,6 +505,16 @@ def run_holehe(job, target, workdir):
 JOB_SLOT = threading.Semaphore(1)  # une seule analyse à la fois (CPU, limites de débit des sites)
 
 
+STATE_FR = {"terminé": "terminée", "annulé": "annulée", "interrompu": "interrompue"}
+
+
+def targets_label(job):
+    n_p = sum(1 for t in job["targets"] if t["kind"] == "pseudo")
+    n_m = len(job["targets"]) - n_p
+    parts = ([f"{n_p} pseudo" + ("s" if n_p > 1 else "")] if n_p else []) + ([f"{n_m} email" + ("s" if n_m > 1 else "")] if n_m else [])
+    return ", ".join(parts) or "aucune cible"
+
+
 def run_job(job):
     if not JOB_SLOT.acquire(blocking=False):
         job["state"] = "queued"
@@ -526,6 +571,11 @@ def _run_job(job):
     job["finished"] = time.time()
     log(job, "Analyse " + job["state"])
     save_job(job)
+    found = sum(len(t.get("results", [])) for t in job["targets"])
+    errs = sum(1 for t in job["targets"] if t.get("status") == "erreur")
+    mins = max(1, round((job["finished"] - job["created"]) / 60))
+    journal("analyse", f"Analyse {STATE_FR.get(job['state'], job['state'])} : {found} compte(s) trouvé(s) en {mins} min"
+            + (f", {errs} cible(s) en erreur" if errs else ""), job["id"])
 
 
 def load_jobs():
@@ -851,6 +901,7 @@ async def create_job(request: Request):
     with LOCK:
         JOBS[job["id"]] = job
     save_job(job)
+    journal("analyse", f"Analyse lancée : {targets_label(job)}", job["id"])
     threading.Thread(target=run_job, args=(job,), daemon=True).start()
     return {"id": job["id"]}
 
@@ -916,6 +967,7 @@ def delete_job(job_id: str):
         raise HTTPException(409, "analyse en cours : annule-la d'abord")
     JOBS.pop(job_id, None)
     shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
+    journal("analyse", f"Analyse du {datetime.fromtimestamp(j['created']).strftime('%d/%m/%Y %H:%M')} supprimée", job_id)
     return {"ok": True}
 
 
@@ -1039,6 +1091,7 @@ async def add_request(request: Request):
         lst = load_reqs()
         lst.append(item)
         save_reqs(lst)
+    journal("demande", f"Demande ({item['kind']}) créée pour {item['site']} : {item['status']}", item["id"])
     return req_view(item)
 
 
@@ -1054,9 +1107,14 @@ async def edit_request(rid: str, request: Request):
         lst = load_reqs()
         for x in lst:
             if x["id"] == rid:
+                before = x.get("status")
                 x.update(upd)
                 _fill_sent(x)
                 save_reqs(lst)
+                if x.get("status") != before:
+                    journal("demande", f"{x.get('site', '?')} : {before} → {x.get('status')}", rid)
+                else:
+                    journal("demande", f"{x.get('site', '?')} : demande modifiée", rid)
                 return req_view(x)
     raise HTTPException(404, "inconnu")
 
@@ -1071,6 +1129,8 @@ def del_request(rid: str):
         if len(new) == len(lst):
             raise HTTPException(404, "inconnu")
         save_reqs(new)
+    gone = next(x for x in lst if x["id"] == rid)
+    journal("demande", f"Demande pour {gone.get('site', '?')} supprimée du suivi", rid)
     return {"ok": True}
 
 
@@ -1144,6 +1204,7 @@ def check_request(rid: str):
             if y["id"] == rid:
                 y["last_check"] = res
                 save_reqs(lst)
+    journal("demande", f"Vérification de la page {x.get('site', '?')} : {res['text']}", rid)
     return res
 
 
@@ -1279,6 +1340,7 @@ def add_leak(body: LeakBody):
         lst = load_leaks()
         lst.append(item)
         save_leaks(lst)
+    journal("fuite", f"Fuite notée : {svc}" + (f" ({item['date']})" if item["date"] else ""), item["id"])
     return dict(item, advice=leak_advice(item["data"]))
 
 
@@ -1292,6 +1354,8 @@ def del_leak(leak_id: str):
         if len(new) == len(lst):
             raise HTTPException(404, "inconnu")
         save_leaks(new)
+    gone = next(x for x in lst if x.get("id") == leak_id)
+    journal("fuite", f"Fuite retirée de la liste : {gone.get('service', '?')}", leak_id)
     return {"ok": True}
 
 
@@ -1306,14 +1370,17 @@ def put_checklist(body: CheckBody):
         raise HTTPException(400, "id invalide")
     with CHECK_LOCK:
         d = load_checks()
+        changed = bool(d.get(body.id)) != bool(body.done)
         d[body.id] = body.done
         tmp = CHECKLIST_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
         tmp.replace(CHECKLIST_FILE)
+    if changed:
+        journal("checklist", f"Contrôle « {body.id} » {'coché' if body.done else 'décoché'}")
     return {"done": d}
 
 
-DATA_FILES = ("jobs", "leaks.json", "demandes.json", "checklist.json", "config.json", "rapports_hebdo")
+DATA_FILES = ("jobs", "leaks.json", "demandes.json", "checklist.json", "config.json", "rapports_hebdo", "journal.jsonl")
 
 
 def has_data(d):
@@ -1376,6 +1443,8 @@ def set_data_dir(body: DataDirBody):
     else:
         st.pop("data_dir", None)
     save_settings(st)
+    journal("réglage", f"Dossier de données changé pour {target}" + (" (données copiées)" if copied else "")
+            + " : actif au prochain démarrage")
     note = ""
     if DATA_SOURCE in ("cli", "env"):
         note = ("Attention : l'option --data-dir ou la variable OSINT_DATA_DIR est active et reste prioritaire "
@@ -1386,9 +1455,69 @@ def set_data_dir(body: DataDirBody):
 @app.get("/api/leaks/export")
 def export_leaks():
     """Télécharge leaks.json (même format que le fichier, sans les conseils calculés)."""
-    data = json.dumps(load_leaks(), ensure_ascii=False, indent=1)
+    lst = load_leaks()
+    data = json.dumps(lst, ensure_ascii=False, indent=1)
+    journal("fuite", f"Export de leaks.json ({len(lst)} fuite(s))")
     return PlainTextResponse(data, media_type="application/json", headers={
         "Content-Disposition": f'attachment; filename="leaks-{date.today().isoformat()}.json"'})
+
+
+def rebuild_journal():
+    """Premier lancement avec journal : reconstitue les événements datables à partir des données existantes."""
+    if JOURNAL_FILE.exists():
+        return 0
+    evs = []
+    for j in JOBS.values():
+        if j.get("created"):
+            evs.append((datetime.fromtimestamp(j["created"]), "analyse", f"Analyse lancée : {targets_label(j)}", j["id"]))
+        if j.get("finished"):
+            found = sum(len(t.get("results", [])) for t in j["targets"])
+            evs.append((datetime.fromtimestamp(j["finished"]), "analyse",
+                        f"Analyse {STATE_FR.get(j.get('state'), j.get('state', '?'))} : {found} compte(s) trouvé(s)", j["id"]))
+    for r in load_reqs():
+        for k, txt in (("created", f"Demande ({r.get('kind', '?')}) créée pour {r.get('site', '?')}"),
+                       ("sent", f"Demande envoyée à {r.get('site', '?')}")):
+            if RE_DATE.match(r.get(k, "") or ""):
+                evs.append((datetime.fromisoformat(r[k]), "demande", txt, r["id"]))
+        lc = r.get("last_check") or {}
+        if lc.get("at"):
+            try:
+                evs.append((datetime.strptime(lc["at"], "%Y-%m-%d %H:%M"), "demande",
+                            f"Vérification de la page {r.get('site', '?')} : {lc.get('text', '')}", r["id"]))
+            except ValueError:
+                pass
+    for f in sorted((REPORT_DIR.glob("*.md") if REPORT_DIR.exists() else [])):
+        try:
+            evs.append((datetime.fromisoformat(f.stem), "rapport", f"Relance hebdomadaire (rapport {f.name})", None))
+        except ValueError:
+            pass
+    for at, kind, txt, ref in sorted(evs, key=lambda e: e[0]):
+        journal(kind, txt, ref, at=at.isoformat(timespec="seconds"), rebuilt=True)
+    journal("réglage", f"Journal créé ({len(evs)} événement(s) reconstitué(s) à partir des données existantes)")
+    return len(evs)
+
+
+@app.get("/api/journal")
+def get_journal(type: str = "", limit: int = 300):
+    evs = read_journal()
+    if type:
+        if type not in JOURNAL_TYPES:
+            raise HTTPException(400, "type inconnu")
+        evs = [e for e in evs if e["type"] == type]
+    evs.sort(key=lambda e: e["at"], reverse=True)
+    return {"events": evs[:max(1, min(limit, 5000))], "total": len(evs), "types": list(JOURNAL_TYPES)}
+
+
+@app.get("/api/journal/export.csv")
+def export_journal():
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["date", "type", "evenement", "reference", "reconstitue"])
+    for e in sorted(read_journal(), key=lambda e: e["at"]):
+        w.writerow([e["at"].replace("T", " "), e["type"], e["text"], e.get("ref", ""), "oui" if e.get("rebuilt") else ""])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="journal-{date.today().isoformat()}.csv"'})
 
 
 @app.get("/api/assistant/models")
@@ -1587,6 +1716,11 @@ details summary{cursor:pointer;color:var(--mut);margin:8px 0}
   <div class="card ck" id="ck"><h2 id="ckhead" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px" title="Afficher / réduire"><span>À faire à la main <small>— coche au fur et à mesure (enregistré sur ce PC)</small></span><span id="cktog" class="mut" style="font-size:13px;white-space:nowrap">▾ réduire</span></h2>
     <div class="bar"><i id="ckbar"></i></div><p class="mut" id="cktxt"></p><div id="ckbody"><div id="cklist"></div>
     <p class="mut" style="font-size:12px">Liens écrits de mémoire, non vérifiés un par un : si une page a changé, cherche le nom du service.</p></div>
+  </div>
+  <div class="card" id="jr"><h2 style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span>Journal <small>— ce qui a été lancé et ce qui s'est passé, du plus récent au plus ancien</small></span>
+    <span class="row" style="gap:6px"><select id="jrtype" aria-label="Filtrer le journal"><option value="">tout</option><option>analyse</option><option>demande</option><option>fuite</option><option>checklist</option><option>rapport</option><option>réglage</option></select><a href="/api/journal/export.csv" download><button type="button">Exporter (CSV)</button></a></span></h2>
+    <div id="jrlist" style="max-height:340px;overflow:auto"></div>
+    <p class="mut" style="font-size:12px">« reconstitué » : événement déduit des données qui existaient avant le journal (dates d'analyses et de demandes), donc moins précis.</p>
   </div>
   <div class="card" id="st"><h2>Dossier de données <small>— où l'application range analyses, fuites et demandes</small></h2>
     <p style="margin:0 0 6px">Dossier utilisé : <b id="stdir"></b> <span id="stsrc" class="mut"></span></p>
@@ -1794,6 +1928,9 @@ $("stgo").onclick=async()=>{const m=$("stmsg");m.className="";m.textContent="…
  if(!r.ok){m.className="s-erreur";m.textContent=d.detail||("erreur "+r.status);return;}
  m.className="s-terminé";m.textContent="Enregistré : "+d.data_dir+(d.copied&&d.copied.length?" (copié : "+d.copied.join(", ")+")":"")+". Ferme puis relance l'application pour l'utiliser."+(d.note?" "+d.note:"");};
 loadSettings();
+async function loadJournal(){let d={events:[]};try{d=await (await fetch("/api/journal?limit=300"+($("jrtype").value?"&type="+encodeURIComponent($("jrtype").value):""))).json();}catch(e){}
+ $("jrlist").innerHTML=(d.events||[]).length?d.events.map(e=>`<div style="display:flex;gap:10px;padding:6px 0;border-top:1px solid var(--line);font-size:13px"><span class="mut" style="white-space:nowrap;font-variant-numeric:tabular-nums">${esc(e.at.replace("T"," ").slice(0,16))}</span><span class="pill">${esc(e.type)}</span><span style="flex:1;min-width:0">${esc(e.text)}${e.rebuilt?' <small class="mut">(reconstitué)</small>':''}</span></div>`).join(""):'<p class="mut">Aucun événement pour l\'instant.</p>';}
+$("jrtype").onchange=loadJournal;loadJournal();setInterval(()=>{if(!document.hidden)loadJournal();},15000);
 $("lkhead").onclick=()=>setLk($("lkbody").style.display==="none");
 try{if(localStorage.getItem("lkopen")==="0")setLk(false);}catch(e){}
 loadLeaks();
@@ -1901,6 +2038,7 @@ def rescan_cli():
     """Relance la dernière analyse terminée, la compare à la précédente et écrit un rapport.
     Ne contacte personne : aucune demande n'est envoyée, les relances restent à ta main."""
     load_jobs()
+    rebuild_journal()
     done = [j for j in JOBS.values() if j.get("state") == "terminé"]
     if not done:
         print("Aucune analyse terminée à relancer : lance-en une d'abord depuis l'interface.")
@@ -1948,6 +2086,7 @@ def rescan_cli():
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("Rapport :", out)
     msg = f"{len(cmp_['new'])} nouveau(x), {len(cmp_['gone'])} disparu(s), {len(late)} demande(s) en retard"
+    journal("rapport", f"Relance hebdomadaire : {msg} (rapport {out.name})", job["id"])
     print(msg)
     if shutil.which("notify-send"):
         subprocess.run(["notify-send", "Audit données perso", msg], check=False)
@@ -2036,6 +2175,7 @@ def window_mode():
         return 1
     else:
         load_jobs()
+        rebuild_journal()
         own = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, log_level="warning"))
         threading.Thread(target=own.run, daemon=True).start()
         for _ in range(60):
@@ -2112,6 +2252,7 @@ def main():
     if args.rescan:
         sys.exit(rescan_cli())
     load_jobs()
+    rebuild_journal()
     print("Données   :", BASE)
     print("Interface : http://127.0.0.1:8300")
     uvicorn.run(app, host="127.0.0.1", port=8300, log_level="warning")
