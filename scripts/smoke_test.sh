@@ -39,3 +39,4 @@ for _ in $(seq 30); do
     sleep 1
 done
 [ "$ok" = 1 ] && echo "serveur ok" || { echo "serveur KO"; exit 1; }
+curl -fsS http://127.0.0.1:8300/favicon.png | head -c 4 | grep -q PNG && echo "icône (favicon) ok"
