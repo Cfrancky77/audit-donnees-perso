@@ -24,6 +24,15 @@ Statut : projet personnel en cours, dépôt privé. Aucune licence n'est défini
 | **Checklist** | Contrôles à faire à la main, cases enregistrées localement. |
 | **Relance hebdomadaire** | `--rescan` sans interface + minuteur systemd optionnel. |
 
+## Interface
+
+- **Deux dispositions**, au choix dans la barre du haut : **Console** (accueil en tuiles : dernière analyse, outils, comptes par sensibilité, demandes, fuites, checklist, activité récente, comparaison) et **Menu** (rubriques Audit / Agir / Suivi). Thème Auto / Sombre / Clair.
+- **Tuiles personnalisables** : « Personnaliser », puis glisser-déposer ou ← →, « Masquer », « Réinitialiser ». Disposition, thème et ordre sont enregistrés dans `~/.config/osint-audit/settings.json`.
+- **Assistant et historique** dans la colonne de droite, repliables.
+- **Demandes** : chaque compte affiche « Faire une demande » (mail type art. 17, 15 ou les deux, destinataire, texte modifiable, « Ouvrir ma messagerie » via `mailto:`) ou « Suivre la demande » s'il en existe une. Les relances utilisent le même modèle. L'application n'envoie jamais rien elle-même.
+- **Fuites** : export `leaks.json` et import d'un export précédent (aperçu, fusion sans doublon).
+- **Journal** chronologique filtrable, export CSV.
+
 ## Installation (Linux, testé sur Zorin OS)
 
 Prérequis : Python ≥ 3.10, `python3-venv`.
