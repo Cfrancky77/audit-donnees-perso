@@ -91,11 +91,7 @@ scripts/build_appimage.sh     # -> audit-donnees-perso-x86_64.AppImage + .sha256
 scripts/smoke_test.sh         # vérifications rapides sans réseau
 ```
 
-La recette est dans `appimage/` (`.desktop`, `.appdata.xml`, icône, `requirements.txt`, `entrypoint.sh`). GitHub Actions (`.github/workflows/appimage.yml`) construit et teste à chaque pull request ; un tag `v*` publie l'AppImage dans une release :
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
+La recette est dans `appimage/` (`.desktop`, `.appdata.xml`, icône, `requirements.txt`, `entrypoint.sh`). GitHub Actions (`.github/workflows/appimage.yml`) construit et teste à chaque pull request. Chaque push sur `main` signe l'AppImage (Ed25519, secret `FCDI_SIGNING_KEY`, pour le lanceur FCDI Apps) et la publie avec son `.sig` dans une release `v0.1.<n° d'exécution>`.
 
 ## Configuration
 
