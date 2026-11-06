@@ -20,3 +20,11 @@ venv/
 *.AppImage.sha256
 build/
 squashfs-root/
+
+# Secrets : ne jamais versionner
+.env
+.env.*
+*.pem
+*.key
+*.p12
+id_rsa*
