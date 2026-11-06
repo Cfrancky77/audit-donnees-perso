@@ -1,4 +1,4 @@
-# osint-audit — auditer ses propres données diffusées
+# audit-donnees-perso — auditer ses propres données diffusées
 
 Application **locale** (une interface web servie sur ton PC, ouvrable dans une fenêtre autonome) pour voir **ce qui circule sur toi sur Internet** : comptes liés à tes pseudos, sites liés à tes adresses email, fuites de données connues, et suivi des demandes de suppression (RGPD).
 
@@ -27,7 +27,7 @@ Statut : projet personnel en cours, dépôt privé. Aucune licence n'est défini
 ## Interface
 
 - **Deux dispositions**, au choix dans la barre du haut : **Console** (accueil en tuiles : dernière analyse, outils, comptes par sensibilité, demandes, fuites, checklist, activité récente, comparaison) et **Menu** (rubriques Audit / Agir / Suivi). Thème Auto / Sombre / Clair.
-- **Tuiles personnalisables** : « Personnaliser », puis glisser-déposer ou ← →, « Masquer », « Réinitialiser ». Disposition, thème et ordre sont enregistrés dans `~/.config/osint-audit/settings.json`.
+- **Tuiles personnalisables** : « Personnaliser », puis glisser-déposer ou ← →, « Masquer », « Réinitialiser ». Disposition, thème et ordre sont enregistrés dans `~/.config/audit-donnees-perso/settings.json`.
 - **Assistant et historique** dans la colonne de droite, repliables.
 - **Demandes** : chaque compte affiche « Faire une demande » (mail type art. 17, 15 ou les deux, destinataire, texte modifiable, « Ouvrir ma messagerie » via `mailto:`) ou « Suivre la demande » s'il en existe une. Les relances utilisent le même modèle. L'application n'envoie jamais rien elle-même.
 - **Fuites** : export `leaks.json` et import d'un export précédent (aperçu, fusion sans doublon).
@@ -42,8 +42,8 @@ mkdir -p ~/osint && cd ~/osint
 python3 -m venv venv
 source venv/bin/activate
 pip install fastapi uvicorn maigret holehe sherlock-project
-cp /chemin/vers/osint_app.py ~/osint/
-python osint_app.py            # puis ouvrir http://127.0.0.1:8300
+cp /chemin/vers/audit_donnees_perso.py ~/osint/
+python audit_donnees_perso.py            # puis ouvrir http://127.0.0.1:8300
 ```
 
 Le serveur n'écoute que sur `127.0.0.1` (rapports = données personnelles agrégées).
@@ -51,8 +51,8 @@ Le serveur n'écoute que sur `127.0.0.1` (rapports = données personnelles agré
 ### Fenêtre autonome et icône
 
 ```bash
-python osint_app.py --window            # fenêtre d'application sans onglets
-python osint_app.py --install-launcher  # icône « Audit données perso » dans le menu
+python audit_donnees_perso.py --window            # fenêtre d'application sans onglets
+python audit_donnees_perso.py --install-launcher  # icône « Audit données perso » dans le menu
 ```
 
 La fenêtre utilise Chrome, Chromium, Brave ou Edge avec un profil séparé (`~/osint/.window-profile`). Sans eux, l'application s'ouvre dans le navigateur par défaut. Fermer la fenêtre arrête le serveur, sauf si une analyse est en cours (elle se termine d'abord).
@@ -60,9 +60,9 @@ La fenêtre utilise Chrome, Chromium, Brave ou Edge avec un profil séparé (`~/
 ### Relance hebdomadaire (facultatif)
 
 ```bash
-python osint_app.py --rescan          # relance la dernière analyse, compare, écrit un rapport
-python osint_app.py --install-timer   # écrit un minuteur systemd (lundi 9 h), sans l'activer
-systemctl --user daemon-reload && systemctl --user enable --now osint-rescan.timer
+python audit_donnees_perso.py --rescan          # relance la dernière analyse, compare, écrit un rapport
+python audit_donnees_perso.py --install-timer   # écrit un minuteur systemd (lundi 9 h), sans l'activer
+systemctl --user daemon-reload && systemctl --user enable --now audit-rescan.timer
 ```
 
 Rapports dans `~/osint/rapports_hebdo/`. Aucune demande n'est envoyée automatiquement.
@@ -72,11 +72,11 @@ Rapports dans `~/osint/rapports_hebdo/`. Aucune demande n'est envoyée automatiq
 Un seul fichier exécutable qui embarque Python 3.12, Maigret, Sherlock, Holehe, FastAPI et uvicorn. Chrome/Chromium/Brave/Edge n'est **pas** embarqué : il doit être installé pour la fenêtre autonome.
 
 ```bash
-chmod +x osint-audit-x86_64.AppImage
-./osint-audit-x86_64.AppImage                     # fenêtre autonome (= --window)
-./osint-audit-x86_64.AppImage --serve             # serveur seul, puis http://127.0.0.1:8300
-./osint-audit-x86_64.AppImage --install-launcher  # icône du menu, pointe vers l'AppImage
-./osint-audit-x86_64.AppImage --rescan
+chmod +x audit-donnees-perso-x86_64.AppImage
+./audit-donnees-perso-x86_64.AppImage                     # fenêtre autonome (= --window)
+./audit-donnees-perso-x86_64.AppImage --serve             # serveur seul, puis http://127.0.0.1:8300
+./audit-donnees-perso-x86_64.AppImage --install-launcher  # icône du menu, pointe vers l'AppImage
+./audit-donnees-perso-x86_64.AppImage --rescan
 ```
 
 Sur Ubuntu 22.04+/Zorin, `libfuse2` est nécessaire (`sudo apt install libfuse2`), ou lancer avec `--appimage-extract-and-run`. Les données restent dans `~/osint/`. Si l'AppImage est déplacée, relancer `--install-launcher` (et `--install-timer` si utilisé).
@@ -85,7 +85,7 @@ Sur Ubuntu 22.04+/Zorin, `libfuse2` est nécessaire (`sudo apt install libfuse2`
 
 ```bash
 pip install python-appimage==1.4.7
-scripts/build_appimage.sh     # -> osint-audit-x86_64.AppImage + .sha256
+scripts/build_appimage.sh     # -> audit-donnees-perso-x86_64.AppImage + .sha256
 scripts/smoke_test.sh         # vérifications rapides sans réseau
 ```
 
@@ -99,7 +99,7 @@ git tag v0.1.0 && git push origin v0.1.0
 
 | Réglage | Où | Défaut |
 |---|---|---|
-| Dossier de données | carte « Dossier de données » de l'interface (enregistré dans `~/.config/osint-audit/settings.json`), ou variable `OSINT_DATA_DIR`, ou option `--data-dir DOSSIER` | `~/osint` |
+| Dossier de données | carte « Dossier de données » de l'interface (enregistré dans `~/.config/audit-donnees-perso/settings.json`), ou variable `OSINT_DATA_DIR`, ou option `--data-dir DOSSIER` | `~/osint` |
 | Serveur Ollama de l'assistant | variable `OLLAMA_URL`, ou `~/osint/config.json` : `{"ollama_url": "http://hote:11434"}` | `http://127.0.0.1:11434` |
 
 Dossier de données : `--data-dir`, puis `OSINT_DATA_DIR`, puis le réglage de l'interface, puis `~/osint`. Le changement s'applique au redémarrage ; l'option « copier mes données actuelles » copie sans rien supprimer. `--install-launcher` et `--install-timer` inscrivent `--data-dir` quand le dossier vient de l'option ou de la variable.
@@ -142,7 +142,7 @@ Ces fichiers contiennent des données personnelles : **ne les versionne jamais**
 
 ## Architecture
 
-Un seul fichier, `osint_app.py` :
+Un seul fichier, `audit_donnees_perso.py` :
 
 - **FastAPI + uvicorn**, une interface HTML/JS intégrée, aucune dépendance front externe.
 - Un thread par analyse, un verrou global (une analyse à la fois), groupes de processus tués proprement (SIGTERM puis SIGKILL).

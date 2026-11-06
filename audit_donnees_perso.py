@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-osint_app.py — interface web locale pour auditer SES PROPRES données diffusées.
+audit_donnees_perso.py — interface web locale pour auditer SES PROPRES données diffusées.
 
 Fonctions :
   - plusieurs pseudos et plusieurs emails en un lancement
@@ -13,9 +13,9 @@ Installation (poste fixe) :
   ./osint_check_pc.sh install          # crée ~/osint/venv avec maigret + holehe
   source ~/osint/venv/bin/activate
   pip install fastapi uvicorn sherlock-project
-  python osint_app.py                  # puis ouvrir http://127.0.0.1:8300
-  python osint_app.py --window         # fenêtre d'application autonome
-  python osint_app.py --install-launcher   # icône dans le menu des applications
+  python audit_donnees_perso.py                  # puis ouvrir http://127.0.0.1:8300
+  python audit_donnees_perso.py --window         # fenêtre d'application autonome
+  python audit_donnees_perso.py --install-launcher   # icône dans le menu des applications
 
 Écoute sur 127.0.0.1 UNIQUEMENT (rapports = données perso agrégées).
 À utiliser uniquement sur tes propres identifiants.
@@ -50,17 +50,23 @@ from pydantic import BaseModel
 
 # ------------------------------------------------------- Dossier de données
 # Priorité : option --data-dir > variable OSINT_DATA_DIR > réglage enregistré
-# (~/.config/osint-audit/settings.json, modifiable dans l'interface) > ~/osint.
+# (~/.config/audit-donnees-perso/settings.json, modifiable dans l'interface) > ~/osint.
 DEFAULT_BASE = Path.home() / "osint"
-SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "osint-audit" / "settings.json"
+SETTINGS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "audit-donnees-perso" / "settings.json"
+
+
+LEGACY_SETTINGS_FILE = SETTINGS_FILE.parent.parent / "osint-audit" / "settings.json"  # ancien nom de l'application
 
 
 def load_settings():
-    try:
-        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
-    except Exception:  # noqa: BLE001
-        return {}
+    """Lit les réglages ; reprend l'ancien fichier (osint-audit) tant que le nouveau n'existe pas."""
+    for f in (SETTINGS_FILE, LEGACY_SETTINGS_FILE):
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except Exception:  # noqa: BLE001
+            continue
+    return {}
 
 
 def save_settings(d):
@@ -953,7 +959,7 @@ def export_csv(job_id: str):
             w.writerow([t["value"], t["kind"], r["source"], r["site"], r["url"],
                         ";".join(r["tags"]), json.dumps(r["infos"], ensure_ascii=False)])
     return PlainTextResponse(buf.getvalue(), media_type="text/csv; charset=utf-8",
-                             headers={"Content-Disposition": f"attachment; filename=osint_{job_id}.csv"})
+                             headers={"Content-Disposition": f"attachment; filename=audit_{job_id}.csv"})
 
 
 @app.delete("/api/jobs/{job_id}")
@@ -1172,7 +1178,7 @@ def check_page(url):
             return super().redirect_request(req, fp, code, msg, headers, newurl)
 
     opener = urllib.request.build_opener(NoPrivateRedirect)
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (osint-perso-audit; verification de ma propre page)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (audit-donnees-perso; verification de ma propre page)"})
     try:
         with opener.open(req, timeout=15) as r:
             return {"ok": True, "code": r.status, "final": r.geturl()}
@@ -1280,7 +1286,7 @@ def pwned_range(prefix: str):
         raise HTTPException(400, "préfixe invalide (5 caractères hexadécimaux)")
     req = urllib.request.Request(
         f"https://api.pwnedpasswords.com/range/{prefix.upper()}",
-        headers={"User-Agent": "osint-perso-audit (usage personnel)", "Add-Padding": "true"})
+        headers={"User-Agent": "audit-donnees-perso (usage personnel)", "Add-Padding": "true"})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return PlainTextResponse(r.read().decode("utf-8", "replace"))
@@ -1483,7 +1489,7 @@ def set_data_dir(body: DataDirBody):
     try:
         target.mkdir(parents=True, exist_ok=True)
         os.chmod(target, 0o700)
-        probe = target / ".osint-write-test"
+        probe = target / ".audit-write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
     except OSError as e:
@@ -2455,17 +2461,17 @@ def install_timer():
     d = Path.home() / ".config" / "systemd" / "user"
     d.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).resolve()
-    (d / "osint-rescan.service").write_text(
-        "[Unit]\nDescription=Audit hebdomadaire de mes données perso (osint_app)\n\n"
+    (d / "audit-rescan.service").write_text(
+        "[Unit]\nDescription=Audit hebdomadaire de mes données perso (audit_donnees_perso)\n\n"
         f"[Service]\nType=oneshot\nExecStart={quote_cmd(self_cmd_data() + ['--rescan'])}\n", encoding="utf-8")
-    (d / "osint-rescan.timer").write_text(
+    (d / "audit-rescan.timer").write_text(
         "[Unit]\nDescription=Audit hebdomadaire (lundi 09:00)\n\n"
         "[Timer]\nOnCalendar=Mon *-*-* 09:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n", encoding="utf-8")
     print("Fichiers écrits dans", d)
     print("Pour activer (rien n'est activé tant que tu ne le fais pas) :")
-    print("  systemctl --user daemon-reload && systemctl --user enable --now osint-rescan.timer")
-    print("Pour vérifier : systemctl --user list-timers | grep osint")
-    print("Pour arrêter  : systemctl --user disable --now osint-rescan.timer")
+    print("  systemctl --user daemon-reload && systemctl --user enable --now audit-rescan.timer")
+    print("Pour vérifier : systemctl --user list-timers | grep audit-rescan")
+    print("Pour arrêter  : systemctl --user disable --now audit-rescan.timer")
     return 0
 
 
@@ -2514,7 +2520,7 @@ def open_window():
         exe = shutil.which(b)
         if exe:
             cmd = [exe, f"--app={URL}", f"--user-data-dir={prof}", "--no-first-run", "--no-default-browser-check",
-                   "--window-size=1280,900", "--class=osint-audit"]
+                   "--window-size=1280,900", "--class=audit-donnees-perso"]
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             class CH:
                 def wait(self):
@@ -2576,15 +2582,19 @@ def install_launcher():
     icons = Path.home() / ".local" / "share" / "icons"
     apps.mkdir(parents=True, exist_ok=True)
     icons.mkdir(parents=True, exist_ok=True)
-    (icons / "osint-audit.svg").write_text(APP_ICON, encoding="utf-8")
-    desk = apps / "osint-audit.desktop"
+    (icons / "audit-donnees-perso.svg").write_text(APP_ICON, encoding="utf-8")
+    desk = apps / "audit-donnees-perso.desktop"
     desk.write_text(
         "[Desktop Entry]\nType=Application\nName=Audit données perso\n"
         "Comment=Audit de mes propres données diffusées\n"
         f"Exec={quote_cmd(self_cmd_data() + ['--window'])}\n"
-        f"Icon={icons / 'osint-audit.svg'}\nTerminal=false\nCategories=Utility;Security;\nStartupWMClass=osint-audit\n",
+        f"Icon={icons / 'audit-donnees-perso.svg'}\nTerminal=false\nCategories=Utility;Security;\nStartupWMClass=audit-donnees-perso\n",
         encoding="utf-8")
     os.chmod(desk, 0o755)
+    for old in (apps / "osint-audit.desktop", icons / "osint-audit.svg"):  # lanceur de l'ancien nom
+        if old.exists():
+            old.unlink()
+            print("Ancien lanceur retiré :", old)
     print("Lanceur écrit :", desk)
     print("Cherche « Audit données perso » dans le menu des applications (déconnexion/reconnexion si absent).")
     print("Pour l'épingler : clic droit sur l'icône > Ajouter aux favoris.")

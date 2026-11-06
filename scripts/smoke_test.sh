@@ -2,7 +2,7 @@
 # Vérifications rapides d'une AppImage construite (sans interface, sans scan réel).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-img="$(realpath "${1:-osint-audit-x86_64.AppImage}")"
+img="$(realpath "${1:-audit-donnees-perso-x86_64.AppImage}")"
 export HOME="$(mktemp -d)"   # ne touche pas au vrai ~/osint
 work="$(mktemp -d)"
 trap 'kill "${pid:-0}" 2>/dev/null || true; rm -rf "$work"' EXIT
@@ -14,7 +14,7 @@ echo "== interpréteur vu par l'application (ne doit pas être le .AppImage)"
 "$img" -I -c '
 import os, sys
 sys.path.insert(0, os.environ["APPDIR"])
-import osint_app as o
+import audit_donnees_perso as o
 print("sys.executable =", sys.executable)
 assert not sys.executable.endswith(".AppImage"), "sys.executable pointe sur l AppImage"
 for script, mod in (("maigret", "maigret"), ("sherlock", "sherlock_project")):
