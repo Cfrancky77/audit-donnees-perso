@@ -460,6 +460,21 @@ def merge_results(primary, extra):
 RE_HOLEHE_LINE = re.compile(r"^\[([+\-x])\] ([A-Za-z0-9._\-]+)\s*$")  # la légende (avec espaces) ne correspond pas
 
 
+# Au-delà de cette part de sites non testables, le test Holehe est « dégradé » : un « aucun compte »
+# n'a plus de valeur. 30 % : en temps normal quelques sites seulement limitent le débit.
+COV_DEGRADED = 0.30
+
+
+def coverage_degraded(cov):
+    """True si trop de sites Holehe n'ont pas pu être testés pour conclure quoi que ce soit."""
+    return bool(cov and cov.get("total")) and cov.get("blocked", 0) / cov["total"] >= COV_DEGRADED
+
+
+def degraded_msg(cov):
+    pc = round(100 * cov["blocked"] / cov["total"])
+    return f"test dégradé : {pc} % des sites non testables ({cov['blocked']}/{cov['total']}), ne conclus rien"
+
+
 def holehe_coverage(out):
     """Compte [+] compte trouvé, [-] pas de compte, [x] site non testable (limite de débit / blocage)."""
     groups = {"+": [], "-": [], "x": []}
@@ -521,8 +536,9 @@ def run_holehe(job, target, workdir):
     if cov:
         log(job, f"Holehe couverture : {cov['total']} sites, {cov['used']} compte(s), "
                  f"{cov['unused']} sans compte, {cov['blocked']} non testables")
-        if cov["blocked"] / cov["total"] > 0.5:
-            add_warn(target, f"couverture faible : {cov['blocked']}/{cov['total']} sites non testables")
+        cov["degraded"] = coverage_degraded(cov)
+        if cov["degraded"]:
+            add_warn(target, degraded_msg(cov))
     with files[-1].open(encoding="utf-8", errors="replace", newline="") as f:
         for row in csv.DictReader(f):
             if str(row.get("exists", "")).strip().lower() != "true":
@@ -820,9 +836,9 @@ def analyze_job(job, ident):
         plan.append(f"{n_mail} site(s) ont un compte lié à ton email : supprime ceux que tu n'utilises plus.")
     for t in job["targets"]:
         c = t.get("coverage")
-        if c and c["total"] and c["blocked"] / c["total"] > 0.5:
-            plan.append(f"Holehe n'a pas pu tester {c['blocked']}/{c['total']} sites pour {t['value']} : "
-                        "« aucun compte » ne prouve rien. Vérifie à la main les sites bloqués (liste dans le rapport).")
+        if coverage_degraded(c):
+            plan.append(f"Holehe pour {t['value']} : {degraded_msg(c)}. "
+                        "« Aucun compte » ne prouve rien. Vérifie à la main les sites bloqués (liste dans le rapport).")
     if fields:
         plan.append("Informations les plus visibles : " + ", ".join(list(fields)[:3]) + ".")
     if any(i["category"] == "sécurité / fuites" for i in items):
@@ -1276,8 +1292,8 @@ def _incomplete(job, targets):
         if t.get("status") != "terminé" or "interrompu" in w:
             notes.append(f"{t['value']} : scan incomplet ou interrompu")
         c = t.get("coverage") or {}
-        if c.get("total") and c.get("blocked", 0) / c["total"] > 0.5:
-            notes.append(f"{t['value']} : plus de la moitié des sites Holehe n'ont pas pu être testés")
+        if coverage_degraded(c):
+            notes.append(f"{t['value']} : Holehe {degraded_msg(c)}")
     return notes
 
 
@@ -1798,6 +1814,7 @@ details summary{cursor:pointer;color:var(--mut);margin:8px 0}
 .ck label{display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13.5px}.ck input{margin-top:3px}
 .ck label.dn span{text-decoration:line-through;color:var(--mut)}
 .err{color:var(--ko);margin:6px 0 0;font-size:13px}
+.degraded{background:var(--ko-soft);color:var(--ko);border:2px solid var(--ko);border-radius:10px;padding:10px 12px;margin:8px 0}
 .flash{animation:fl 1.6s ease-out}@keyframes fl{from{box-shadow:0 0 0 3px var(--acc)}to{box-shadow:0 0 0 0 transparent}}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 /* tuiles de la console */
@@ -2061,24 +2078,29 @@ function render(){
  const pct=n?Math.min(100,Math.round(100*(job.done+part)/n)):0,est=part>0?" · estimation selon le temps écoulé":"";
  $("pbar").style.width=pct+"%";$("ptxt").textContent=`${job.done}/${n} cibles traitées (${pct}%${est})`+idleTxt();
  $("state").textContent=job.state;$("state").className="pill s-"+job.state;
- $("tlist").innerHTML=job.targets.map(t=>`<div class="row" style="justify-content:space-between"><span>${esc(t.kind)} · <b>${esc(t.value)}</b></span>
+ $("tlist").innerHTML=job.targets.filter(t=>covDeg(t.coverage)).map(t=>degBox(t.coverage,t.value)).join("")+job.targets.map(t=>`<div class="row" style="justify-content:space-between"><span>${esc(t.kind)} · <b>${esc(t.value)}</b></span>
   <span><span class="s-${esc(t.status)}">${esc(t.status)}</span> · ${(t.results||[]).length} résultat(s)${t.error?` · <span class="s-erreur">${esc(t.error)}</span>`:""}${t.warn?` · <span class="s-annulé">${esc(t.warn)}</span>`:""}${t.coverage&&!t.warn?` · couverture ${t.coverage.total-t.coverage.blocked}/${t.coverage.total}`:""}${durTxt(t)}</span></div>`).join("");
  const lg=$("log"),atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;
  lg.textContent=job.log.slice(-120).join("\n");if(atEnd)lg.scrollTop=lg.scrollHeight;
  $("cancel").disabled=!["running","queued"].includes(job.state);$("del").disabled=["running","queued"].includes(job.state);
  $("csv").href=`/api/jobs/${cur}/export.csv`;$("json").href=`/api/jobs/${cur}`;
  renderResults();maybeAnalysis();}
+const COV_DEGRADED=0.30; // même seuil que COV_DEGRADED côté serveur
+const covDeg=c=>!!(c&&c.total)&&c.blocked/c.total>=COV_DEGRADED;
+const degBox=(c,who)=>{const pc=Math.round(100*c.blocked/c.total);return `<div class="degraded" role="alert"><b>⚠ Test dégradé${who?` (${esc(who)})`:""} : ${pc} % des sites non testables, ne conclus rien.</b><br><span style="font-size:13px">Holehe n'a pas pu interroger ${c.blocked} site(s) sur ${c.total} (limite de débit ou blocage). « Aucun compte » ne veut rien dire pour ces sites : relance plus tard, change de réseau, ou vérifie-les à la main.</span></div>`;};
 function renderResults(){
  if(!job)return;const f=$("filter").value.toLowerCase();let h="";
+
  for(const t of job.targets){
   const rows=(t.results||[]).filter(r=>!f||JSON.stringify([t.value,r]).toLowerCase().includes(f));
   h+=`<h3>${esc(t.kind)} : ${esc(t.value)} <small>(${rows.length} / ${(t.results||[]).length})</small></h3>`;
   if(t.coverage&&t.coverage.total){const c=t.coverage,ok=c.total-c.blocked,pc=Math.round(100*ok/c.total);
+   if(covDeg(c))h+=degBox(c);
    h+=`<div class="card" style="margin:6px 0;background:var(--card2)"><b>Couverture Holehe</b> : ${ok}/${c.total} sites testés avec succès (${pc} %)
-    <div class="bar" style="margin:6px 0"><i style="width:${pc}%;background:${pc<50?"var(--ko)":"var(--ok)"}"></i></div>
+    <div class="bar" style="margin:6px 0"><i style="width:${pc}%;background:${covDeg(c)?"var(--ko)":"var(--ok)"}"></i></div>
     <span class="mut" style="font-size:12.5px">${c.used} compte(s) trouvé(s), ${c.unused} site(s) sans compte, <b>${c.blocked} non testable(s)</b>. « Aucun compte » ne prouve rien pour les sites bloqués.</span>
     ${c.blocked?`<details><summary>${c.blocked} site(s) bloqué(s) à vérifier à la main</summary>${c.blocked_sites.map(s=>`<a class="badge" href="https://${esc(s)}" target="_blank" rel="noopener noreferrer">${esc(s)}</a>`).join(" ")}</details>`:""}</div>`;}
-  if(!rows.length){h+=`<p class="mut">${t.status==="terminé"?(t.coverage&&t.coverage.blocked?"Aucun compte trouvé sur les sites testables.":"Rien trouvé."):"—"}</p>`;continue;}
+  if(!rows.length){h+=`<p class="mut">${t.status==="terminé"?(covDeg(t.coverage)?"Aucun compte trouvé sur les sites testables, mais le test est dégradé : ce résultat ne prouve rien.":t.coverage&&t.coverage.blocked?"Aucun compte trouvé sur les sites testables.":"Rien trouvé."):"—"}</p>`;continue;}
   h+=`<table><tr><th>Site</th><th>Source</th><th>Infos publiques détectées</th><th>Demande</th></tr>`;
   rows.forEach(r=>{
    const kv=Object.entries(r.infos||{}).map(([k,v])=>`<div class="kv"><b>${esc(k)}</b> : ${esc(v)}</div>`).join("")||`<span class="mut">compte détecté, pas de détail public</span>`;
