@@ -46,9 +46,40 @@ jobs:
             audit-donnees-perso-x86_64.AppImage.sha256
           retention-days: 14
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+
+      - name: Dépendances
+        shell: bash
+        run: pip install -r appimage/requirements.txt pyinstaller==6.22.3
+
+      - name: Construction de l'exécutable
+        shell: bash
+        run: windows/build_exe.sh
+
+      - name: Tests rapides
+        shell: bash
+        run: windows/smoke_test.sh
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: audit-donnees-perso-windows
+          path: |
+            dist/audit-donnees-perso-windows-x86_64.exe
+            dist/audit-donnees-perso-windows-x86_64.exe.sha256
+          retention-days: 14
+
   release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    needs: [build, windows]
     runs-on: ubuntu-22.04
     permissions:
       contents: write   # créer la release
@@ -61,7 +92,9 @@ jobs:
     steps:
       # gh run download plutôt que actions/download-artifact : une action tierce de moins.
       - name: Récupérer l'AppImage du job build
-        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n audit-donnees-perso-AppImage
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n audit-donnees-perso-AppImage -D .
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n audit-donnees-perso-windows -D .
 
       # Clé privée dans le secret FCDI_SIGNING_KEY (contenu du .pem).
       # Le message signé lie l'application, la version, le nom du fichier et son empreinte
@@ -85,4 +118,5 @@ jobs:
       - name: Publier la release
         run: |
           gh release create "$TAG" "$FILE" "$FILE.sig" "$FILE.sha256" \
+            audit-donnees-perso-windows-x86_64.exe audit-donnees-perso-windows-x86_64.exe.sha256 \
             --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
