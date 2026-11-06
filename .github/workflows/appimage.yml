@@ -1,10 +1,13 @@
 name: AppImage
 
+# PR / lancement manuel : construit et teste l'AppImage (artefact), sans release.
+# Push sur main : idem, puis signe l'AppImage (Ed25519, pour le lanceur FCDI Apps)
+# et la publie dans la release v0.1.<numéro d'exécution>, avec son .sig.
 on:
   push:
-    tags: ["v*"]        # git tag v0.1.0 && git push origin v0.1.0 -> publie une release
+    branches: [main]
   pull_request:
-  workflow_dispatch:    # construction manuelle (onglet Actions), sans release
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -42,20 +45,42 @@ jobs:
           retention-days: 14
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: write   # créer la release
+      actions: read     # télécharger l'artefact du job build
+    env:
+      APP_ID: audit-donnees-perso
+      FILE: audit-donnees-perso-x86_64.AppImage
+      TAG: v0.1.${{ github.run_number }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      # TODO : épingler sur un hash (non résolu : ce job n'a pas encore tourné)
-      - uses: actions/download-artifact@v4
-        with:
-          name: audit-donnees-perso-AppImage
-      - name: Publier la release
+      # gh run download plutôt que actions/download-artifact : une action tierce de moins.
+      - name: Récupérer l'AppImage du job build
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n audit-donnees-perso-AppImage
+
+      # Clé privée dans le secret FCDI_SIGNING_KEY (contenu du .pem).
+      # Le message signé lie l'application, la version, le nom du fichier et son empreinte
+      # (même format que FCDI-Apps/tools/sign.sh et src/verify.rs).
+      - name: Signature pour FCDI Apps
         env:
-          GH_TOKEN: ${{ github.token }}
+          FCDI_SIGNING_KEY: ${{ secrets.FCDI_SIGNING_KEY }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            audit-donnees-perso-x86_64.AppImage audit-donnees-perso-x86_64.AppImage.sha256 \
-            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          if [ -z "$FCDI_SIGNING_KEY" ]; then
+            echo "::error::Secret FCDI_SIGNING_KEY absent : ajoutez-le (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+          KEYFILE="$(mktemp)"; MSG="$(mktemp)"
+          trap 'rm -f "$KEYFILE" "$MSG"' EXIT
+          printf '%s\n' "$FCDI_SIGNING_KEY" > "$KEYFILE"
+          SHA="$(sha256sum "$FILE" | cut -d' ' -f1)"
+          printf 'FCDI-Apps signature v1\n%s\n%s\n%s\n%s\n' "$APP_ID" "$TAG" "$FILE" "$SHA" > "$MSG"
+          openssl pkeyutl -sign -rawin -inkey "$KEYFILE" -in "$MSG" | base64 -w0 > "$FILE.sig"
+          test -s "$FILE.sig"
+
+      - name: Publier la release
+        run: |
+          gh release create "$TAG" "$FILE" "$FILE.sig" "$FILE.sha256" \
+            --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
