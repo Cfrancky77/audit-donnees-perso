@@ -3,6 +3,6 @@
 maigret==0.6.6
 holehe==1.61
 sherlock-project==0.16.2
-# Serveur web : versions non figées sur le poste ; à figer après un build validé.
-fastapi
-uvicorn
+# Serveur web : versions résolues par le build CI du 2026-11-06 (test de fumée vert).
+fastapi==0.162.0
+uvicorn==0.54.0
