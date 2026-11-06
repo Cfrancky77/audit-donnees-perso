@@ -254,10 +254,12 @@ class Out(str):
     timeout = False
 
 
-def run_cmd(job, cmd, cwd, max_s=None):
+def run_cmd(job, cmd, cwd, max_s=None, env_extra=None, no_stdin=False):
     """Lance une commande, relaie la sortie dans le journal.
-    Retourne (code, sortie). Si max_s est dépassé : arrêt propre (SIGTERM puis SIGKILL), sortie.timeout=True."""
-    env = dict(os.environ, NO_COLOR="1", PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    Retourne (code, sortie). Si max_s est dépassé : arrêt propre (SIGTERM puis SIGKILL), sortie.timeout=True.
+    no_stdin : entrée vide, pour qu'un outil qui pose une question ne bloque jamais."""
+    env = dict(os.environ, NO_COLOR="1", PYTHONUNBUFFERED="1", PYTHONUTF8="1", PYTHONIOENCODING="utf-8",
+               **(env_extra or {}))
     if IS_WIN:
         extra = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW}
     else:
@@ -265,6 +267,7 @@ def run_cmd(job, cmd, cwd, max_s=None):
     proc = subprocess.Popen(
         cmd, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace",
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL if no_stdin else None,
         **extra,
     )
     PROCS[job["id"]] = proc
@@ -559,6 +562,82 @@ def run_holehe(job, target, workdir):
     return results
 
 
+# -------------------------------------------------------------- user-scanner (essai)
+# Réglages imposés : pas de vérification/installation de mise à jour, jamais d'envoi à Hudson Rock
+# sans question (et --hudson n'est jamais passé), modules « bruyants » (qui envoient un e-mail de
+# réinitialisation au titulaire) jamais lancés : sans --allow-loud ils sont « Skipped ».
+US_CONFIG = {"auto_update_status": False, "auto_hudson_prompt": True, "auto_loud_single_module_prompt": True}
+
+
+def us_coverage(items):
+    """Registered / Not Registered / Error / Skipped. Skipped = modules volontairement non lancés
+    (ils préviendraient le titulaire) : exclus du total, comptés à part."""
+    st = [str(x.get("status", "")) for x in items]
+    if not st:
+        return None
+    blocked = sorted({str(x.get("site_name", "?")) for x in items if x.get("status") == "Error"})
+    total = sum(1 for v in st if v != "Skipped")
+    if not total:
+        return None
+    return {"total": total, "used": st.count("Registered"), "unused": st.count("Not Registered"),
+            "blocked": st.count("Error"), "blocked_sites": blocked, "skipped": st.count("Skipped")}
+
+
+def run_user_scanner(job, target, workdir):
+    opts = job["options"]
+    cfg = workdir / "user-scanner-config.json"
+    cfg.write_text(json.dumps(US_CONFIG), encoding="utf-8")
+    out_json = workdir / "user-scanner.json"
+    cmd = py_prefix() + ["-m", "user_scanner", "-e", target["value"], "--all", "-f", "json", "-o", str(out_json)]
+    if not opts.get("nsfw"):
+        cmd.append("--no-nsfw")
+    code, out = run_cmd(job, cmd, workdir, 300, env_extra={"USER_SCANNER_CONFIG": str(cfg)}, no_stdin=True)
+    try:
+        items = json.loads(out_json.read_text(encoding="utf-8"))
+        if not isinstance(items, list):
+            raise ValueError("format inattendu")
+    except Exception as e:  # noqa: BLE001
+        add_warn(target, "user-scanner interrompu après 5 min" if out.timeout else
+                 f"user-scanner : aucun résultat lisible (code {code}, {type(e).__name__})")
+        return []
+    cov = us_coverage(items)
+    target["coverage_us"] = cov
+    if cov:
+        log(job, f"user-scanner couverture : {cov['total']} sites, {cov['used']} compte(s), {cov['unused']} sans compte, "
+                 f"{cov['blocked']} non testables, {cov['skipped']} écartés (envoient un e-mail)")
+        cov["degraded"] = coverage_degraded(cov)
+        if cov["degraded"]:
+            add_warn(target, "user-scanner " + degraded_msg(cov))
+    res = []
+    for x in items:
+        if x.get("status") != "Registered":
+            continue
+        extra = x.get("extra") if isinstance(x.get("extra"), dict) else {}
+        infos = {str(k)[:40]: str(v)[:200] for k, v in list(extra.items())[:8] if v not in (None, "", [], {})}
+        url = str(x.get("url") or "")
+        res.append({"source": "user-scanner", "site": str(x.get("site_name") or "?"),
+                    "url": url if re.match(r"^https?://", url) else "", "tags": [], "infos": infos})
+    return res
+
+
+def merge_email_results(a, b):
+    """Holehe + user-scanner : un site trouvé par les deux n'apparaît qu'une fois (sources fusionnées)."""
+    key = lambda r: re.sub(r"[^a-z0-9]", "", r["site"].lower().split(".")[0])
+    out, idx = [], {}
+    for r in a + b:
+        k = key(r)
+        if k in idx:
+            prev = out[idx[k]]
+            if r["source"] not in prev["source"]:
+                prev["source"] += "+" + r["source"]
+            prev["infos"] = {**r["infos"], **prev["infos"]}
+            prev["url"] = prev["url"] or r["url"]
+        else:
+            idx[k] = len(out)
+            out.append(dict(r))
+    return out
+
+
 # ------------------------------------------------------------------ Orchestre
 JOB_SLOT = threading.Semaphore(1)  # une seule analyse à la fois (CPU, limites de débit des sites)
 
@@ -616,7 +695,12 @@ def _run_job(job):
                     add_warn(t, "maigret : 0 résultat")
                 t["results"] = res
             else:
-                t["results"] = run_holehe(job, t, workdir)
+                res = run_holehe(job, t, workdir)
+                if job["options"].get("user_scanner") and not job.get("cancel"):
+                    us = run_user_scanner(job, t, workdir)
+                    log(job, f"Bilan {t['value']} : holehe={len(res)} user-scanner={len(us)}")
+                    res = merge_email_results(res, us)
+                t["results"] = res
             t["status"] = "annulé" if job.get("cancel") else ("erreur" if t.get("error") and not t["results"] else "terminé")
         except Exception as e:  # noqa: BLE001
             t["status"] = "erreur"
@@ -835,10 +919,10 @@ def analyze_job(job, ident):
     if n_mail:
         plan.append(f"{n_mail} site(s) ont un compte lié à ton email : supprime ceux que tu n'utilises plus.")
     for t in job["targets"]:
-        c = t.get("coverage")
-        if coverage_degraded(c):
-            plan.append(f"Holehe pour {t['value']} : {degraded_msg(c)}. "
-                        "« Aucun compte » ne prouve rien. Vérifie à la main les sites bloqués (liste dans le rapport).")
+        for tool, c in (("Holehe", t.get("coverage")), ("user-scanner", t.get("coverage_us"))):
+            if coverage_degraded(c):
+                plan.append(f"{tool} pour {t['value']} : {degraded_msg(c)}. "
+                            "« Aucun compte » ne prouve rien. Vérifie à la main les sites bloqués (liste dans le rapport).")
     if fields:
         plan.append("Informations les plus visibles : " + ", ".join(list(fields)[:3]) + ".")
     if any(i["category"] == "sécurité / fuites" for i in items):
@@ -929,6 +1013,7 @@ def new_job(pseudos, mails, o, idn):
         "max_min": max(2, min(int(o.get("max_min", 20)), 180)),
         "sherlock": bool(o.get("sherlock", True)),
         "nsfw": bool(o.get("nsfw", False)),
+        "user_scanner": bool(o.get("user_scanner", False)),
     }
     identity = clean_ident(idn.get("first"), idn.get("last")) if isinstance(idn, dict) else clean_ident("", "")
     return {
@@ -1291,9 +1376,9 @@ def _incomplete(job, targets):
         w = t.get("warn") or ""
         if t.get("status") != "terminé" or "interrompu" in w:
             notes.append(f"{t['value']} : scan incomplet ou interrompu")
-        c = t.get("coverage") or {}
-        if coverage_degraded(c):
-            notes.append(f"{t['value']} : Holehe {degraded_msg(c)}")
+        for tool, c in (("Holehe", t.get("coverage")), ("user-scanner", t.get("coverage_us"))):
+            if coverage_degraded(c):
+                notes.append(f"{t['value']} : {tool} {degraded_msg(c)}")
     return notes
 
 
@@ -1502,7 +1587,7 @@ def tools_status():
     import importlib.util
     out = []
     for name, mod, dist in (("Maigret", "maigret", "maigret"), ("Sherlock", "sherlock_project", "sherlock-project"),
-                            ("Holehe", "holehe", "holehe")):
+                            ("Holehe", "holehe", "holehe"), ("user-scanner", "user_scanner", "user-scanner")):
         ok = importlib.util.find_spec(mod) is not None
         try:
             ver = md.version(dist)
@@ -1882,7 +1967,8 @@ dialog label{margin:0;font-size:12.5px;color:var(--mut)}
     <label>Timeout par site (s) : <input type="number" id="timeout" value="20" min="5" max="120" style="width:90px"></label>
     <label>Durée max par outil (min) : <input type="number" id="maxmin" value="20" min="2" max="180" style="width:90px"></label>
     <label><input type="checkbox" id="sherlock" checked> Ajouter Sherlock (pseudos, ~400 sites, doublons fusionnés)</label>
-    <label><input type="checkbox" id="nsfw"> Sherlock : inclure sites adultes (--nsfw)</label>
+    <label><input type="checkbox" id="nsfw"> Inclure les sites adultes (Sherlock, user-scanner)</label>
+    <label><input type="checkbox" id="userscanner"> Essai : ajouter user-scanner pour les emails (~170 sites ; ceux qui t'enverraient un e-mail ne sont jamais testés)</label>
     <small>Variantes : <b>franck{?}dupont</b> teste franck_dupont, franck-dupont, franck.dupont (Sherlock seul, sans Maigret).<br>
     Holehe : sites où l'email a un compte (méthode "mot de passe oublié").</small>
   </div></details>
@@ -2065,7 +2151,7 @@ function addField(box,ph){const d=document.createElement("div");d.className="row
  d.innerHTML=`<input type="text" placeholder="${ph}"><button onclick="this.parentNode.remove()" aria-label="Retirer">×</button>`;$(box).appendChild(d);d.firstChild.focus();}
 const vals=box=>[...$(box).querySelectorAll("input")].map(i=>i.value.trim()).filter(Boolean);
 async function start(){
- const body={pseudos:vals("pseudos"),emails:vals("emails"),options:{all_sites:$("allsites").checked,top_sites:+$("top").value,timeout:+$("timeout").value,max_min:+$("maxmin").value,sherlock:$("sherlock").checked,nsfw:$("nsfw").checked},identity:{first:$("idfirst").value.trim(),last:$("idlast").value.trim()}};
+ const body={pseudos:vals("pseudos"),emails:vals("emails"),options:{all_sites:$("allsites").checked,top_sites:+$("top").value,timeout:+$("timeout").value,max_min:+$("maxmin").value,sherlock:$("sherlock").checked,nsfw:$("nsfw").checked,user_scanner:$("userscanner").checked},identity:{first:$("idfirst").value.trim(),last:$("idlast").value.trim()}};
  $("go").disabled=true;$("goerr").textContent="";
  try{const j=await J("/api/jobs",{method:"POST",headers:JSONH,body:JSON.stringify(body)});open_(j.id);show("res");}
  catch(e){$("goerr").textContent=e.message;}finally{$("go").disabled=false;}}
@@ -2078,7 +2164,7 @@ function render(){
  const pct=n?Math.min(100,Math.round(100*(job.done+part)/n)):0,est=part>0?" · estimation selon le temps écoulé":"";
  $("pbar").style.width=pct+"%";$("ptxt").textContent=`${job.done}/${n} cibles traitées (${pct}%${est})`+idleTxt();
  $("state").textContent=job.state;$("state").className="pill s-"+job.state;
- $("tlist").innerHTML=job.targets.filter(t=>covDeg(t.coverage)).map(t=>degBox(t.coverage,t.value)).join("")+job.targets.map(t=>`<div class="row" style="justify-content:space-between"><span>${esc(t.kind)} · <b>${esc(t.value)}</b></span>
+ $("tlist").innerHTML=job.targets.map(t=>(covDeg(t.coverage)?degBox(t.coverage,t.value):"")+(covDeg(t.coverage_us)?degBox(t.coverage_us,t.value,"user-scanner"):"")).join("")+job.targets.map(t=>`<div class="row" style="justify-content:space-between"><span>${esc(t.kind)} · <b>${esc(t.value)}</b></span>
   <span><span class="s-${esc(t.status)}">${esc(t.status)}</span> · ${(t.results||[]).length} résultat(s)${t.error?` · <span class="s-erreur">${esc(t.error)}</span>`:""}${t.warn?` · <span class="s-annulé">${esc(t.warn)}</span>`:""}${t.coverage&&!t.warn?` · couverture ${t.coverage.total-t.coverage.blocked}/${t.coverage.total}`:""}${durTxt(t)}</span></div>`).join("");
  const lg=$("log"),atEnd=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-20;
  lg.textContent=job.log.slice(-120).join("\n");if(atEnd)lg.scrollTop=lg.scrollHeight;
@@ -2087,20 +2173,20 @@ function render(){
  renderResults();maybeAnalysis();}
 const COV_DEGRADED=0.30; // même seuil que COV_DEGRADED côté serveur
 const covDeg=c=>!!(c&&c.total)&&c.blocked/c.total>=COV_DEGRADED;
-const degBox=(c,who)=>{const pc=Math.round(100*c.blocked/c.total);return `<div class="degraded" role="alert"><b>⚠ Test dégradé${who?` (${esc(who)})`:""} : ${pc} % des sites non testables, ne conclus rien.</b><br><span style="font-size:13px">Holehe n'a pas pu interroger ${c.blocked} site(s) sur ${c.total} (limite de débit ou blocage). « Aucun compte » ne veut rien dire pour ces sites : relance plus tard, change de réseau, ou vérifie-les à la main.</span></div>`;};
+const degBox=(c,who,tool="Holehe")=>{const pc=Math.round(100*c.blocked/c.total);return `<div class="degraded" role="alert"><b>⚠ Test ${esc(tool)} dégradé${who?` (${esc(who)})`:""} : ${pc} % des sites non testables, ne conclus rien.</b><br><span style="font-size:13px">${esc(tool)} n'a pas pu interroger ${c.blocked} site(s) sur ${c.total} (limite de débit ou blocage). « Aucun compte » ne veut rien dire pour ces sites : relance plus tard, change de réseau, ou vérifie-les à la main.</span></div>`;};
+function covCard(c,tool){if(!(c&&c.total))return "";const ok=c.total-c.blocked,pc=Math.round(100*ok/c.total);
+ return (covDeg(c)?degBox(c,"",tool):"")+`<div class="card" style="margin:6px 0;background:var(--card2)"><b>Couverture ${esc(tool)}</b> : ${ok}/${c.total} sites testés avec succès (${pc} %)
+    <div class="bar" style="margin:6px 0"><i style="width:${pc}%;background:${covDeg(c)?"var(--ko)":"var(--ok)"}"></i></div>
+    <span class="mut" style="font-size:12.5px">${c.used} compte(s) trouvé(s), ${c.unused} site(s) sans compte, <b>${c.blocked} non testable(s)</b>${c.skipped?`, ${c.skipped} écarté(s) car ils t'enverraient un e-mail`:""}. « Aucun compte » ne prouve rien pour les sites bloqués.</span>
+    ${c.blocked?`<details><summary>${c.blocked} site(s) bloqué(s) à vérifier à la main</summary>${c.blocked_sites.map(s=>s.includes(".")?`<a class="badge" href="https://${esc(s)}" target="_blank" rel="noopener noreferrer">${esc(s)}</a>`:`<span class="badge">${esc(s)}</span>`).join(" ")}</details>`:""}</div>`;}
 function renderResults(){
  if(!job)return;const f=$("filter").value.toLowerCase();let h="";
 
  for(const t of job.targets){
   const rows=(t.results||[]).filter(r=>!f||JSON.stringify([t.value,r]).toLowerCase().includes(f));
   h+=`<h3>${esc(t.kind)} : ${esc(t.value)} <small>(${rows.length} / ${(t.results||[]).length})</small></h3>`;
-  if(t.coverage&&t.coverage.total){const c=t.coverage,ok=c.total-c.blocked,pc=Math.round(100*ok/c.total);
-   if(covDeg(c))h+=degBox(c);
-   h+=`<div class="card" style="margin:6px 0;background:var(--card2)"><b>Couverture Holehe</b> : ${ok}/${c.total} sites testés avec succès (${pc} %)
-    <div class="bar" style="margin:6px 0"><i style="width:${pc}%;background:${covDeg(c)?"var(--ko)":"var(--ok)"}"></i></div>
-    <span class="mut" style="font-size:12.5px">${c.used} compte(s) trouvé(s), ${c.unused} site(s) sans compte, <b>${c.blocked} non testable(s)</b>. « Aucun compte » ne prouve rien pour les sites bloqués.</span>
-    ${c.blocked?`<details><summary>${c.blocked} site(s) bloqué(s) à vérifier à la main</summary>${c.blocked_sites.map(s=>`<a class="badge" href="https://${esc(s)}" target="_blank" rel="noopener noreferrer">${esc(s)}</a>`).join(" ")}</details>`:""}</div>`;}
-  if(!rows.length){h+=`<p class="mut">${t.status==="terminé"?(covDeg(t.coverage)?"Aucun compte trouvé sur les sites testables, mais le test est dégradé : ce résultat ne prouve rien.":t.coverage&&t.coverage.blocked?"Aucun compte trouvé sur les sites testables.":"Rien trouvé."):"—"}</p>`;continue;}
+  for(const [c,tool] of [[t.coverage,"Holehe"],[t.coverage_us,"user-scanner"]])h+=covCard(c,tool);
+  if(!rows.length){h+=`<p class="mut">${t.status==="terminé"?(covDeg(t.coverage)||covDeg(t.coverage_us)?"Aucun compte trouvé sur les sites testables, mais le test est dégradé : ce résultat ne prouve rien.":t.coverage&&t.coverage.blocked?"Aucun compte trouvé sur les sites testables.":"Rien trouvé."):"—"}</p>`;continue;}
   h+=`<table><tr><th>Site</th><th>Source</th><th>Infos publiques détectées</th><th>Demande</th></tr>`;
   rows.forEach(r=>{
    const kv=Object.entries(r.infos||{}).map(([k,v])=>`<div class="kv"><b>${esc(k)}</b> : ${esc(v)}</div>`).join("")||`<span class="mut">compte détecté, pas de détail public</span>`;
