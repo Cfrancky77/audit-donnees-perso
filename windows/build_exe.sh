@@ -12,6 +12,7 @@ python -I -m py_compile audit_donnees_perso.py windows/winmain.py
 # d'exécution « <hash>__mypyc » est à la racine de site-packages et PyInstaller ne le voit pas.
 HIDDEN=()
 while IFS= read -r m; do
+  m="${m%$'\r'}"   # Python écrit des fins de ligne Windows (\r\n)
   [ -n "$m" ] && HIDDEN+=(--hidden-import "$m")
 done < <(python -I - <<'PY'
 import glob, os, sysconfig
