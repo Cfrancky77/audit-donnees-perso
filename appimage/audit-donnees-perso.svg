@@ -3,19 +3,20 @@
 <clipPath id="c"><rect width="256" height="256" rx="56"/></clipPath></defs>
 <rect width="256" height="256" rx="56" fill="url(#g)"/>
 <g clip-path="url(#c)">
-<g fill="#f1f4ff">
-<path d="M60 122 L146 124 L152 136 L176 154 L156 161 L160 170 L156 182 L152 192 L138 202 L140 214 C196 224 226 238 236 262 L10 262 C16 238 50 224 86 214 L82 198 C60 182 54 150 60 122 Z"/>
-<path d="M52 128 C50 76 82 38 112 38 C142 38 170 74 168 128 Z"/>
-<path d="M138 118 L208 132 L142 136 Z"/>
-<path d="M54 124 L22 136 L84 134 Z"/>
-<circle cx="112" cy="34" r="7"/>
-<path d="M156 170 L190 184 L186 192 L152 180 Z"/>
-<path d="M184 184 h26 a4 4 0 0 1 4 4 v8 a14 14 0 0 1 -14 14 h0 a14 14 0 0 1 -14 -14 z"/>
+<path fill="#f1f4ff" d="M60 126 L148 128 L152 140 L172 158 L154 164 L158 172 L154 184 L150 194 L136 204 L138 216 C196 226 226 240 236 262 L10 262 C16 238 50 226 86 216 L84 200 C60 184 54 150 60 126 Z"/>
+<g stroke="#2d3b6e" stroke-width="3" stroke-linejoin="round" fill="#cdd8ff">
+<path d="M142 122 C170 118 200 124 216 140 C188 138 162 138 140 136 Z"/>
+<path d="M56 122 C40 124 24 130 14 144 C40 140 66 138 86 136 Z"/>
+<path d="M52 130 C46 84 78 50 112 50 C146 50 176 84 170 130 C130 138 90 138 52 130 Z"/>
+<path d="M112 50 C100 80 98 106 102 134 M112 50 C124 80 128 106 126 134" fill="none"/>
+<path d="M60 122 C74 112 78 122 76 134 C70 130 64 128 58 128" fill="#b4c3ff"/>
+<path d="M112 50 C98 38 90 44 100 52 C106 54 110 52 112 50 Z M112 50 C126 38 134 44 124 52 C118 54 114 52 112 50 Z"/>
+<circle cx="112" cy="50" r="4.5" fill="#6d8bff"/>
 </g>
-<path d="M54 110 Q110 124 170 110" fill="none" stroke="#2d3b6e" stroke-width="5"/>
-<g fill="none" stroke="#a9b8ff" stroke-width="3" stroke-linecap="round" opacity=".6"><path d="M198 176 q-8 -8 0 -14 q8 -6 0 -14"/></g>
-<circle cx="212" cy="120" r="30" fill="#6d8bff" fill-opacity=".22" stroke="#6d8bff" stroke-width="11"/>
-<path d="M196 112 A18 18 0 0 1 210 102" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".85"/>
-<path d="M232 142 L244 158" stroke="#6d8bff" stroke-width="18" stroke-linecap="round"/>
+<path d="M52 130 C90 140 130 140 170 130" fill="none" stroke="#2d3b6e" stroke-width="5"/>
+<path d="M196 168 L180 198" stroke="#6d8bff" stroke-width="15" stroke-linecap="round"/>
+<circle cx="214" cy="148" r="28" fill="#6d8bff" fill-opacity=".25" stroke="#6d8bff" stroke-width="11"/>
+<path d="M198 140 A18 18 0 0 1 212 130" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".85"/>
+<rect x="158" y="190" width="30" height="24" rx="11" fill="#f1f4ff" stroke="#2d3b6e" stroke-width="3" transform="rotate(-25 173 202)"/>
 </g>
 </svg>
