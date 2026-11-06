@@ -22,13 +22,18 @@ for f in sorted(glob.glob(os.path.join(sp, "*__mypyc*"))):
 PY
 )
 echo "modules mypyc ajoutés : ${HIDDEN[*]:-aucun}"
+# user-scanner charge ses modules e-mail depuis les fichiers .py de user_scanner/email_scan
+# (importlib, chemin sur disque) : il faut ces sources telles quelles dans l'exécutable.
+US_DIR="$(python -I -c 'import os, user_scanner; print(os.path.dirname(user_scanner.__file__))')"
+US_DIR="${US_DIR%$'\r'}"
 pyinstaller --noconfirm --clean --onefile \
   --name "$NAME" \
   --icon windows/icon.ico \
   --paths . \
   --collect-all maigret --collect-all sherlock_project --collect-all holehe \
+  --collect-all user_scanner --collect-all curl_cffi --add-data "$US_DIR/email_scan;user_scanner/email_scan" \
   --collect-submodules uvicorn \
-  --copy-metadata maigret --copy-metadata sherlock-project --copy-metadata holehe \
+  --copy-metadata maigret --copy-metadata sherlock-project --copy-metadata holehe --copy-metadata user-scanner \
   "${HIDDEN[@]}" \
   windows/winmain.py
 test -f "dist/$NAME.exe"

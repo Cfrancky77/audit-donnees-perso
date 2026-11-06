@@ -25,9 +25,15 @@ print("self_cmd =", o.self_cmd())
 '
 
 echo "== modules embarqués"
-"$img" -I -c "import maigret, holehe, sherlock_project, fastapi, uvicorn; print('imports ok')"
+"$img" -I -c "import maigret, holehe, sherlock_project, user_scanner, curl_cffi, fastapi, uvicorn; print('imports ok')"
 "$img" -I -m maigret --version
 "$img" -I -m sherlock_project --version
+"$img" -I -m user_scanner --version
+"$img" -I -c '
+from user_scanner.core.helpers import load_categories, load_modules
+n = sum(len(load_modules(p)) for p in load_categories(is_email=True).values())
+print("modules e-mail user-scanner :", n); assert n > 100
+'
 
 echo "== serveur (--serve, port 8300, 30 s max)"
 (cd "$work" && "$img" --appimage-extract >/dev/null)

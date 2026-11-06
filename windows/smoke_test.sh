@@ -25,6 +25,12 @@ print("self_cmd =", o.self_cmd())
 echo "== outils"
 "$exe" --py -m maigret --version
 "$exe" --py -m sherlock_project --version
+"$exe" --py -m user_scanner --version
+"$exe" --py -c '
+from user_scanner.core.helpers import load_categories, load_modules
+n = sum(len(load_modules(p)) for p in load_categories(is_email=True).values())
+print("modules e-mail user-scanner :", n); assert n > 100
+'
 
 echo "== serveur (--serve, port 8300, 40 s max)"
 "$exe" --serve &
