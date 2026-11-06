@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/img/icone.png" alt="Icône" width="110"></p>
+
 # audit-donnees-perso — auditer ses propres données diffusées
 
 Application **locale** (une interface web servie sur ton PC, ouvrable dans une fenêtre autonome) pour voir **ce qui circule sur toi sur Internet** : comptes liés à tes pseudos, sites liés à tes adresses email, fuites de données connues, et suivi des demandes de suppression (RGPD).
@@ -7,6 +9,18 @@ Application **locale** (une interface web servie sur ton PC, ouvrable dans une f
 Statut : projet personnel en cours. Licence : MIT (voir `LICENSE`).
 
 Icône : illustration « détective » de GraphicMama-team, sous licence Pixabay (usage libre et gratuit, sans attribution obligatoire, modification permise ; interdit : l'utiliser comme marque, logo déposé ou nom commercial). Elle n'est pas couverte par la licence MIT du code.
+
+## Aperçu
+
+<p align="center"><img src="docs/img/console.png" alt="La console, thème sombre" width="900"></p>
+
+*Captures avec des données fictives.*
+
+| | |
+|---|---|
+| <img src="docs/img/resultats.png" alt="Résultats d'une analyse"><br>Résultats d'une analyse (disposition Menu) | <img src="docs/img/demandes.png" alt="Suivi des demandes"><br>Suivi des demandes RGPD |
+| <img src="docs/img/mail.png" alt="Mail type"><br>Mail type, ouvert dans ta messagerie | <img src="docs/img/fuites.png" alt="Fuites connues"><br>Fuites connues, import / export |
+| <img src="docs/img/journal.png" alt="Journal"><br>Journal chronologique | <img src="docs/img/console-clair.png" alt="Console, thème clair"><br>Console, thème clair |
 
 ---
 
