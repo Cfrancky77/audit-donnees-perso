@@ -30,7 +30,11 @@ echo "== serveur (--serve, port 8300, 40 s max)"
 "$exe" --serve &
 pid=$!
 for i in $(seq 1 80); do
-  if curl -fsS http://127.0.0.1:8300/api/checklist >/dev/null 2>&1; then echo "serveur ok"; exit 0; fi
+  if curl -fsS http://127.0.0.1:8300/api/checklist >/dev/null 2>&1; then
+    echo "serveur ok"
+    curl -fsS http://127.0.0.1:8300/favicon.png | head -c 4 | grep -q PNG && echo "icône (favicon) ok"
+    exit 0
+  fi
   sleep 0.5
 done
 echo "le serveur n'a pas répondu" >&2
