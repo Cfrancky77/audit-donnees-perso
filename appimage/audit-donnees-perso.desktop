@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=audit-donnees-perso
+Name[fr]=Audit données perso
+Comment=Audit de mes propres données diffusées
+Exec=audit-donnees-perso --window
+Icon=audit-donnees-perso
+Terminal=false
+Categories=Utility;Security;
+StartupWMClass=audit-donnees-perso
