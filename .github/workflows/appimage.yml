@@ -6,6 +6,8 @@ name: AppImage
 on:
   push:
     branches: [main]
+    # Pas de nouvelle release pour un simple changement de documentation.
+    paths-ignore: ['README.md', 'SECURITY.md', 'docs/**', 'LICENSE', '.github/CODEOWNERS', '.github/dependabot.yml']
   pull_request:
   workflow_dispatch:
 
