@@ -162,8 +162,13 @@ def load_config():
         return {}
 
 
-# Assistant IA : un Ollama (local par défaut). Priorité : variable OLLAMA_URL > config.json > localhost.
-OLLAMA_URL = str(os.environ.get("OLLAMA_URL") or load_config().get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
+# Assistant IA : un Ollama (local par défaut). Priorité : variable OLLAMA_URL > config.json
+# (modifiable dans l'interface) > localhost.
+def ollama_url():
+    return str(os.environ.get("OLLAMA_URL") or load_config().get("ollama_url") or "http://127.0.0.1:11434").rstrip("/")
+
+
+OLLAMA_URL = ollama_url()
 
 
 def py_prefix():
@@ -1766,6 +1771,40 @@ def assistant_models():
         return {"ok": False, "url": OLLAMA_URL, "error": f"{type(e).__name__}: {e}"}
 
 
+class OllamaBody(BaseModel):
+    url: str = ""  # vide = revenir au défaut (http://127.0.0.1:11434)
+
+
+@app.post("/api/settings/ollama")
+def set_ollama(body: OllamaBody):
+    """Enregistre l'adresse d'Ollama dans config.json, l'applique tout de suite et teste la connexion."""
+    global OLLAMA_URL
+    raw = body.url.strip().rstrip("/")
+    if raw:
+        try:
+            u = urlparse(raw)
+            u.port  # lève ValueError si le port est invalide
+            ok = u.scheme in ("http", "https") and bool(u.hostname)
+        except ValueError:
+            ok = False
+        if not ok:
+            raise HTTPException(400, "adresse invalide : indique par ex. http://192.168.1.169:11434")
+    cfg = load_config()
+    if raw:
+        cfg["ollama_url"] = raw
+    else:
+        cfg.pop("ollama_url", None)
+    tmp = BASE / "config.json.tmp"
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(BASE / "config.json")
+    OLLAMA_URL = ollama_url()
+    journal("réglage", f"Adresse Ollama : {OLLAMA_URL}")
+    out = assistant_models()
+    if os.environ.get("OLLAMA_URL"):
+        out["note"] = "La variable OLLAMA_URL est définie : elle reste prioritaire sur ce réglage."
+    return out
+
+
 @app.post("/api/jobs/{job_id}/assistant")
 def assistant(job_id: str, body: AskBody):
     j = JOBS.get(job_id)
@@ -2086,6 +2125,7 @@ dialog label{margin:0;font-size:12.5px;color:var(--mut)}
 <aside class="rail" aria-label="Assistant et historique">
   <details class="card" id="asbox" open><summary>Assistant <span class="pill" id="asstate">Ollama</span></summary><div class="in">
     <p class="mut" style="font-size:12.5px;margin-top:0" id="asinfo"></p>
+    <div class="row"><input id="asurl" style="flex:1" placeholder="http://127.0.0.1:11434" aria-label="Adresse Ollama"><button onclick="setOllama()" title="Enregistrer l'adresse et tester la connexion">OK</button></div>
     <div class="row"><select id="asmodel" style="flex:1"></select><button onclick="loadModels()" title="Recharger la liste des modèles">↻</button></div>
     <div class="chat" id="aschat"></div>
     <textarea id="asq" rows="2" placeholder="Ex : Quel compte supprimer en premier ?"></textarea>
@@ -2231,11 +2271,15 @@ function renderAnalysis(){if(!AN)return;const s=AN.summary;$("an").style.display
  $("anitems").innerHTML=(main.join("")||`<p class="mut">Aucun compte prioritaire ou à vérifier.</p>`)+(low.length?`<details><summary>${low.length} compte(s) à faible priorité</summary>${low.join("")}</details>`:"");}
 /* ================= assistant ================= */
 async function loadModels(){let d;try{d=await (await fetch("/api/assistant/models")).json();}catch(e){d={ok:false,error:String(e)}}
+ showModels(d);}
+async function setOllama(){let d;try{d=await J("/api/settings/ollama",{method:"POST",headers:JSONH,body:JSON.stringify({url:$("asurl").value})});}catch(e){d={ok:false,url:$("asurl").value,error:e.message}}
+ showModels(d);if(d.note)$("asinfo").textContent+=" "+d.note;}
+function showModels(d){if(d.url)$("asurl").value=d.url;
  const sel=$("asmodel"),prev=sel.value;
  if(d.ok&&d.models.length){sel.innerHTML=d.models.map(m=>`<option>${esc(m)}</option>`).join("");if(d.models.includes(prev))sel.value=prev;
   $("asstate").textContent="Ollama";$("asstate").className="pill p-ok";
   $("asinfo").textContent=`Sur ton serveur Ollama (${d.url}) : rien ne part dans le cloud. Il explique les résultats et peut se tromper.`;}
- else{sel.innerHTML="";$("asstate").textContent="indisponible";$("asstate").className="pill p-ko";$("asinfo").textContent=`Ollama injoignable (${d.url}). ${d.error||""} Définis OLLAMA_URL ou ollama_url dans config.json si l'adresse est différente.`;}
+ else{sel.innerHTML="";$("asstate").textContent="indisponible";$("asstate").className="pill p-ko";$("asinfo").textContent=`Ollama injoignable (${d.url}). ${d.error||""} Indique l'adresse de ton serveur Ollama ci-dessous (ex. http://192.168.1.169:11434) puis OK.`;}
  OLLAMA_OK=!!(d.ok&&d.models.length);}
 let OLLAMA_OK=false;
 function addMsg(c,t){const d=document.createElement("div");d.className=c;d.textContent=t;$("aschat").appendChild(d);d.scrollIntoView({block:"nearest"});return d;}

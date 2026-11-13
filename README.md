@@ -112,11 +112,11 @@ La recette est dans `appimage/` (`.desktop`, `.appdata.xml`, icône, `requiremen
 | Réglage | Où | Défaut |
 |---|---|---|
 | Dossier de données | carte « Dossier de données » de l'interface (enregistré dans `~/.config/audit-donnees-perso/settings.json`), ou variable `OSINT_DATA_DIR`, ou option `--data-dir DOSSIER` | `~/osint` |
-| Serveur Ollama de l'assistant | variable `OLLAMA_URL`, ou `~/osint/config.json` : `{"ollama_url": "http://hote:11434"}` | `http://127.0.0.1:11434` |
+| Serveur Ollama de l'assistant | champ « adresse » du panneau Assistant (enregistré dans `config.json` du dossier de données), ou variable `OLLAMA_URL` | `http://127.0.0.1:11434` |
 
 Dossier de données : `--data-dir`, puis `OSINT_DATA_DIR`, puis le réglage de l'interface, puis `~/osint`. Le changement s'applique au redémarrage ; l'option « copier mes données actuelles » copie sans rien supprimer. `--install-launcher` et `--install-timer` inscrivent `--data-dir` quand le dossier vient de l'option ou de la variable.
 
-Ollama : variable d'environnement, puis `config.json`, puis la valeur par défaut. L'assistant est facultatif : sans Ollama, tout le reste fonctionne.
+Ollama : variable d'environnement, puis `config.json` (le champ de l'interface l'écrit et s'applique tout de suite, avec un test de connexion), puis la valeur par défaut. Ollama doit écouter sur le réseau s'il est sur une autre machine (`OLLAMA_HOST=0.0.0.0` côté serveur). L'assistant est facultatif : sans Ollama, tout le reste fonctionne.
 
 ## Données stockées (dans le dossier de données, `~/osint/` par défaut, mode 700)
 

@@ -46,3 +46,13 @@ for _ in $(seq 30); do
 done
 [ "$ok" = 1 ] && echo "serveur ok" || { echo "serveur KO"; exit 1; }
 curl -fsS http://127.0.0.1:8300/favicon.png | head -c 4 | grep -q PNG && echo "icône (favicon) ok"
+
+echo "== réglage de l'adresse Ollama"
+api=http://127.0.0.1:8300/api/settings/ollama
+code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -d '{"url":"ftp://x"}' "$api")
+[ "$code" = 400 ] && echo "adresse invalide refusée" || { echo "adresse invalide acceptée ($code)"; exit 1; }
+curl -fsS -H 'Content-Type: application/json' -d '{"url":"http://127.0.0.1:9/"}' "$api" | grep -q '"url":"http://127.0.0.1:9"' \
+    && echo "adresse enregistrée et appliquée" || { echo "adresse non appliquée"; exit 1; }
+curl -fsS http://127.0.0.1:8300/api/assistant/models | grep -q '"ok":false,"url":"http://127.0.0.1:9"' \
+    && echo "test de connexion : injoignable signalé" || { echo "test de connexion KO"; exit 1; }
+grep -q '"ollama_url": "http://127.0.0.1:9"' "$HOME/osint/config.json" && echo "config.json ok" || { echo "config.json KO"; exit 1; }
